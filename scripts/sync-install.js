@@ -115,6 +115,13 @@ function needsFullInstall() {
   if (JSON.stringify(installed.dependencies) !== JSON.stringify(pkg.dependencies)) {
     return 'the dependencies changed';
   }
+  // VS Code caches extension manifests; only a real install refreshes that cache, so new
+  // windows would otherwise keep the old commands and settings. Same key as manifestKey() in
+  // src/extension.ts.
+  const manifestKey = (p) => JSON.stringify([p.contributes, p.activationEvents, p.main]);
+  if (manifestKey(installed) !== manifestKey(pkg)) {
+    return 'commands or settings changed';
+  }
   return undefined;
 }
 

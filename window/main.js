@@ -98,6 +98,13 @@ function createWindow() {
   if (onTop) {
     win.setAlwaysOnTop(true, 'floating');
   }
+  // Page errors go to stderr, which the extension keeps in window.log.
+  win.webContents.on('console-message', (...a) => {
+    const d = a[0] && typeof a[0] === 'object' && 'message' in a[0] ? a[0] : { level: a[1], message: a[2] };
+    if (d.level === 'error' || d.level === 'warning' || d.level === 2 || d.level === 3) {
+      console.error('[page]', d.message);
+    }
+  });
   win.webContents.on('will-navigate', (e) => e.preventDefault());
   win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
 

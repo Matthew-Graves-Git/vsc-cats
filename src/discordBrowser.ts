@@ -6,7 +6,8 @@ import puppeteer, { Browser, ElementHandle, Page } from 'puppeteer-core';
 export type BrowserStatus = 'starting' | 'watching' | 'login' | 'error' | 'stopped';
 
 export type DiscordEvent =
-  | { kind: 'spawn'; id: string; text: string }
+  /** `existing`: the cat was already in the channel when watching started (not a new spawn). */
+  | { kind: 'spawn'; id: string; text: string; existing?: boolean }
   /** `firstAuthor`: display name on the earliest "cat" reply since the spawn (whoever Cat Bot saw first). */
   | { kind: 'caught'; text: string; firstAuthor?: string }
   | { kind: 'spawnGone'; id: string }
@@ -70,7 +71,8 @@ export function detectBrowser(configured: string): string | undefined {
   return candidates.find((c) => c && fs.existsSync(c));
 }
 
-function run(file: string, args: string[]): Promise<string> {
+/** Runs a program and resolves to its stdout ('' on any failure). */
+export function run(file: string, args: string[]): Promise<string> {
   return new Promise((resolve) => {
     cp.execFile(file, args, { windowsHide: true, timeout: 20_000 }, (_err, stdout) => resolve(String(stdout ?? '')));
   });
@@ -747,6 +749,8 @@ export function observerScript(cfg: { bot: string; trigger: string; caught: stri
     }
   };
   let lastSpawn: bigint | null = null;
+  /** The spawn that was already on screen when we attached; it skips the surf-in intro. */
+  let existingId = '';
 
   /** Display name on the earliest "cat" reply after the latest spawn, i.e. who Cat Bot saw first. */
   const firstReplyAuthor = (): string | undefined => {
@@ -791,7 +795,7 @@ export function observerScript(cfg: { bot: string; trigger: string; caught: stri
       seen.add(id + ':spawn');
       spawnIds.add(id);
       lastSpawn = snowflake(li);
-      emit({ kind: 'spawn', id, text });
+      emit({ kind: 'spawn', id, text, existing: id === existingId });
       return;
     }
     // Checked before "caught": Cat Bot's bonus text says "Anyone who cought this cat", and the
@@ -865,6 +869,7 @@ export function observerScript(cfg: { bot: string; trigger: string; caught: stri
     const pending = items.filter((li) => !seen.has(li.id + ':spawn') && isSpawn(li)).pop();
     scan(list, true);
     if (pending) {
+      existingId = pending.id;
       seen.delete(pending.id + ':spawn');
     }
     const obs = new MutationObserver((muts) => {

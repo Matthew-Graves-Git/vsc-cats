@@ -300,7 +300,7 @@ async function onSpawn(e: Extract<DiscordEvent, { kind: 'spawn' }>) {
   const trigger = cfg().get<string>('triggerText', 'appeared!');
   const caption = spawnCaption(e.text, trigger);
   active = { id: e.id, yoinked: false, resolved: false, type: spawnType(caption, trigger) };
-  panel.spawn(caption, surfSet(ctx.extensionPath, spawnWord(caption, trigger)));
+  panel.spawn(caption, surfSet(ctx.extensionPath, spawnWord(caption, trigger)), !!e.existing);
 }
 
 function countCatch(type: string) {

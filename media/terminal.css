@@ -1,5 +1,6 @@
-/* Minigame terminal: a green-phosphor CRT box that pops out of the cat window's bottom-right
-   corner and covers 95% of it. Every piece of text in it is green. */
+/* Minigame terminal: a green-phosphor CRT box centered in the cat window with an equal gap on
+   every side, on a slightly see-through background (80% opaque) so the cat shows faintly behind
+   it. It pops out of its own bottom-right corner. Every piece of text in it is green. */
 
 @font-face {
   font-family: 'VT323';
@@ -14,19 +15,17 @@
   --g-glow: rgba(51, 255, 102, 0.55);
   --g-wash: rgba(51, 255, 102, 0.12);
   --tfs: 18px; /* set by terminal.js so the text fits */
+  --term-gap: 8px; /* the same gap on all four sides, whatever the window's shape */
 
   position: absolute;
-  right: 0;
-  bottom: 0;
-  width: 95%;
-  height: 95%;
+  inset: var(--term-gap);
   z-index: 20;
   box-sizing: border-box;
   display: flex;
   flex-direction: column;
   overflow: hidden;
   border: 2px solid var(--g);
-  background: #020a04;
+  background: rgba(2, 10, 4, 0.8); /* only the background is see-through; text and borders stay solid */
   box-shadow: 0 0 0 2px #000, 0 0 12px rgba(51, 255, 102, 0.25);
   color: var(--g);
   font-family: 'VT323', Consolas, 'Courier New', monospace;

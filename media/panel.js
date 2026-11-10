@@ -135,8 +135,14 @@
         status.textContent = '';
         yoink.disabled = false;
         setState('spawn');
-        // A cat type without GIFs has no surf set: Nyan keeps looping under the caption.
-        setTarget(m.surf);
+        if (m.skipIntro && m.surf && !showing) {
+          // The cat was already there when Cat Yoink started: straight to its loop, no surf-in.
+          target = showing = m.surf;
+          play(m.surf.loop, 'loop');
+        } else {
+          // A cat type without GIFs has no surf set: Nyan keeps looping under the caption.
+          setTarget(m.surf);
+        }
         break;
       case 'tooSlow':
         yoink.disabled = true;
@@ -158,6 +164,8 @@
       case 'term':
         if (window.catTerminal) {
           window.catTerminal.handle(m.msg);
+        } else {
+          console.error('Cat Yoink: terminal.js did not load; dropping terminal message', m.msg && m.msg.type);
         }
         break;
     }

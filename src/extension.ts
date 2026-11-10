@@ -65,13 +65,14 @@ function manifestKey(): string {
 function load() {
   subs = [];
   // Core registers its commands etc. on context.subscriptions; give it our own list so a reload
-  // can dispose exactly those. Reflect.get with the real context keeps its getters working.
-  const proxy = new Proxy(context, {
-    get: (target, key) => (key === 'subscriptions' ? subs : Reflect.get(target, key, target)),
-  });
+  // can dispose exactly those. VS Code freezes the context, so a Proxy can't swap that property
+  // (Proxy invariants); instead inherit everything from the real context and shadow just that one.
+  const scoped = Object.create(context, {
+    subscriptions: { value: subs, enumerable: true },
+  }) as vscode.ExtensionContext;
   try {
     core = require('./core') as Core;
-    core.activate(proxy);
+    core.activate(scoped);
   } catch (err: any) {
     core = undefined;
     void vscode.window.showErrorMessage(`Cat Yoink failed to start: ${err?.message ?? err}`);

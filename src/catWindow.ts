@@ -5,7 +5,39 @@ import * as net from 'net';
 import * as os from 'os';
 import * as path from 'path';
 import type { SurfSet } from './gifs';
+import { run } from './discordBrowser';
 import type { MinigameForm } from './discordBrowser';
+
+/** A window that dies this soon after launch, before saying "ready", is reported as a failed start. */
+const EARLY_EXIT_MS = 5000;
+const LOG_LINES = 200;
+
+/**
+ * Windows only: ends Cat Yoink windows left behind by an earlier build or a crashed extension
+ * host. Only windows of this extension whose parent is this extension host (a previous core after
+ * a hot reload) or no longer exists are killed; windows owned by other live VS Code windows stay.
+ */
+async function killStaleWindows(extensionPath: string): Promise<void> {
+  if (process.platform !== 'win32') {
+    return;
+  }
+  const needle = path.join(extensionPath, 'window', 'main.js').toLowerCase().replace(/'/g, "''");
+  const script =
+    `$all = @(Get-CimInstance Win32_Process); $ids = @{}; $all | ForEach-Object { $ids[[int]$_.ProcessId] = 1 }; ` +
+    `$all | Where-Object { $_.Name -eq 'electron.exe' -and $_.CommandLine -and $_.CommandLine -notmatch '--type=' -and ` +
+    `$_.CommandLine.ToLower().Contains('${needle}') -and ` +
+    `($_.ParentProcessId -eq ${process.pid} -or -not $ids.ContainsKey([int]$_.ParentProcessId)) } | ` +
+    `ForEach-Object { $_.ProcessId }`;
+  const out = await run('powershell.exe', [
+    '-NoProfile',
+    '-NonInteractive',
+    '-EncodedCommand',
+    Buffer.from(script, 'utf16le').toString('base64'),
+  ]);
+  for (const pid of out.split(/\s+/).map(Number).filter((n) => Number.isInteger(n) && n > 0)) {
+    await run('taskkill.exe', ['/PID', String(pid), '/T', '/F']);
+  }
+}
 
 /** What the minigame terminal popup (media/terminal.js) shows. */
 export type TerminalMessage =
@@ -18,7 +50,8 @@ export type TerminalMessage =
 
 export type PanelMessage =
   | { type: 'idle' }
-  | { type: 'spawn'; caption: string; surf?: SurfSet }
+  /** `skipIntro`: the cat was already there, so show its surf loop right away (no Nyan → surf-in). */
+  | { type: 'spawn'; caption: string; surf?: SurfSet; skipIntro?: boolean }
   | { type: 'tooSlow'; text: string }
   | { type: 'status'; text: string }
   | { type: 'result'; text: string; caught: boolean }
@@ -41,6 +74,10 @@ export class CatWindow {
   private count = 0;
   private onTop = vscode.workspace.getConfiguration('catYoink').get<boolean>('alwaysOnTop', true);
   private errorShown = false;
+  /** True while stale windows are being cleaned up, before the new window is spawned. */
+  private launching = false;
+  /** Bumped by dispose() so a launch that was still cleaning up doesn't spawn afterwards. */
+  private generation = 0;
 
   onYoink: () => void = () => {};
   /** Messages from the minigame terminal: mgGo, mgAnswer { answer }, mgClose. */
@@ -50,14 +87,14 @@ export class CatWindow {
 
   /** Shows the window (starting it if needed) without taking focus. */
   show(): void {
-    if (!this.proc && !this.launch()) {
+    if (!this.proc && !this.launching && !this.launch()) {
       return;
     }
-    this.cmd({ cmd: 'show' });
+    this.cmd({ cmd: 'show' }); // buffered until the window connects if it is still starting
   }
 
   hide(): void {
-    if (this.proc) {
+    if (this.proc || this.launching) {
       this.cmd({ cmd: 'hide' });
     }
   }
@@ -80,9 +117,9 @@ export class CatWindow {
   }
 
   /** A cat appeared. `surf` animates it in; without one, Nyan keeps looping under the overlay. */
-  spawn(caption: string, surf?: SurfSet): void {
+  spawn(caption: string, surf?: SurfSet, skipIntro = false): void {
     this.show();
-    this.last = { type: 'spawn', caption, surf };
+    this.last = { type: 'spawn', caption, surf, skipIntro };
     this.send(this.last);
   }
 
@@ -111,6 +148,8 @@ export class CatWindow {
   dispose(): Promise<void> {
     const proc = this.proc;
     if (!proc) {
+      this.generation++; // cancels a launch that is still cleaning up stale windows
+      this.reset();
       return Promise.resolve();
     }
     const exited = new Promise<void>((resolve) => {
@@ -121,7 +160,12 @@ export class CatWindow {
       proc.once('exit', () => resolve());
       setTimeout(() => {
         if (proc.exitCode === null) {
-          proc.kill();
+          if (process.platform === 'win32' && proc.pid) {
+            // Take the window's GPU and renderer processes with it.
+            cp.execFile('taskkill.exe', ['/PID', String(proc.pid), '/T', '/F'], { windowsHide: true }, () => {});
+          } else {
+            proc.kill();
+          }
         }
       }, 1000).unref();
       setTimeout(resolve, 2000).unref(); // never hang a reload or shutdown
@@ -143,6 +187,26 @@ export class CatWindow {
     }
   }
 
+  /** Appends a line to <storage>/window.log (last LOG_LINES lines kept). */
+  private log(text: string): void {
+    try {
+      fs.mkdirSync(this.storageDir, { recursive: true });
+      const file = path.join(this.storageDir, 'window.log');
+      let lines: string[] = [];
+      try {
+        lines = fs.readFileSync(file, 'utf8').split('\n').filter(Boolean);
+      } catch {
+        // first entry
+      }
+      for (const l of text.split('\n').filter((s) => s.trim())) {
+        lines.push(`${new Date().toISOString()} ${l.trim().slice(0, 500)}`);
+      }
+      fs.writeFileSync(file, lines.slice(-LOG_LINES).join('\n') + '\n');
+    } catch {
+      // logging is best effort
+    }
+  }
+
   private launch(): boolean {
     const exe = this.electronPath();
     if (!exe) {
@@ -154,7 +218,22 @@ export class CatWindow {
       }
       return false;
     }
+    // Clear out windows left by an earlier build first (they'd keep answering with old code),
+    // then spawn. Messages sent meanwhile are buffered in outbox/queue.
+    const gen = ++this.generation;
+    this.launching = true;
+    void killStaleWindows(this.extensionPath)
+      .catch(() => {})
+      .then(() => {
+        if (gen === this.generation) {
+          this.spawnWindow(exe);
+        }
+      });
+    return true;
+  }
 
+  private spawnWindow(exe: string): void {
+    this.launching = false;
     const id = `cat-yoink-${process.pid}-${Math.random().toString(36).slice(2, 8)}`;
     const pipe = process.platform === 'win32' ? `\\\\.\\pipe\\${id}` : path.join(os.tmpdir(), `${id}.sock`);
 
@@ -199,21 +278,43 @@ export class CatWindow {
 
     const proc = cp.spawn(exe, [path.join(this.extensionPath, 'window', 'main.js')], {
       env,
-      stdio: 'ignore',
+      stdio: ['ignore', 'pipe', 'pipe'],
       windowsHide: false,
     });
-    proc.on('error', () => this.onExit(proc));
-    proc.on('exit', () => this.onExit(proc));
+    // Keep the tail of the window's output so a window that dies on launch leaves a trace.
+    let tail = '';
+    const collect = (d: Buffer) => {
+      tail = (tail + d.toString()).slice(-3000);
+    };
+    proc.stdout?.on('data', collect);
+    proc.stderr?.on('data', collect);
+    const startedAt = Date.now();
+    this.log(`window started (pid ${proc.pid})`);
+    proc.on('error', (err) => {
+      this.log(`window failed to spawn: ${err.message}`);
+      this.onExit(proc, startedAt, tail);
+    });
+    proc.on('exit', (code, signal) => {
+      this.log(`window exited (code ${code}, signal ${signal})\n${tail}`);
+      this.onExit(proc, startedAt, tail);
+    });
 
     this.proc = proc;
     this.server = server;
     this.ready = false;
-    return true;
   }
 
-  private onExit(proc: cp.ChildProcess): void {
-    if (this.proc === proc) {
-      this.reset(); // respawned on the next show()
+  private onExit(proc: cp.ChildProcess, startedAt: number, tail: string): void {
+    if (this.proc !== proc) {
+      return; // we closed it ourselves (dispose) or it was already handled
+    }
+    const diedEarly = !this.ready && Date.now() - startedAt < EARLY_EXIT_MS;
+    this.reset(); // respawned on the next show()
+    if (diedEarly && !this.errorShown) {
+      this.errorShown = true;
+      void vscode.window.showErrorMessage(
+        `Cat Yoink window failed to start: see window.log in the extension storage folder. ${tail.trim().split('\n').pop() ?? ''}`.trim()
+      );
     }
   }
 
@@ -226,13 +327,18 @@ export class CatWindow {
     this.outbox = [];
     this.ready = false;
     this.queue = [];
+    this.launching = false;
   }
 
   private onMessage(m: { type: string }): void {
     if (m.type === 'ready') {
       this.ready = true;
       this.post({ type: 'count', count: this.count });
-      this.post(this.last);
+      // A fresh window mid-cat (relaunched) shows that cat's loop straight away. If the spawn is
+      // still queued, it's what launched the window: a new cat, which keeps its surf-in intro.
+      if (!this.queue.includes(this.last)) {
+        this.post(this.last.type === 'spawn' ? { ...this.last, skipIntro: true } : this.last);
+      }
       for (const q of this.queue.splice(0)) {
         this.post(q);
       }
@@ -244,7 +350,7 @@ export class CatWindow {
   }
 
   private send(m: PanelMessage): void {
-    if (!this.proc) {
+    if (!this.proc && !this.launching) {
       return; // the window replays count and last state when it starts
     }
     if (this.ready) {
