@@ -50,6 +50,8 @@ export type TerminalMessage =
 
 export type PanelMessage =
   | { type: 'idle' }
+  /** Watching just started: no cat, and no Nyan yet either until we know whether a cat is out. */
+  | { type: 'loading' }
   /**
    * `id`: the spawn message's id, so two cats of the same type in a row are told apart.
    * `skipIntro`: the cat was already there, so show its loop right away (no surf-in / rain enter).
@@ -158,6 +160,12 @@ export class CatWindow {
 
   idle(): void {
     this.last = { type: 'idle' };
+    this.send(this.last);
+  }
+
+  /** Watching started; idle() or spawn() follows once the channel has been checked. */
+  loading(): void {
+    this.last = { type: 'loading' };
     this.send(this.last);
   }
 

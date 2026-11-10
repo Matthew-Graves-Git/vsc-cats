@@ -216,6 +216,8 @@ html, body {
 
 .stage[data-state="idle"] .loading { display: block; }
 .stage:not([data-state="idle"]) .loading { display: none; }
+/* During a cat rain, waiting for the next cat is just the storm: no "Loading cat...". */
+.stage.raining .loading { display: none; }
 .stage[data-state="idle"] .yoink { display: none; }
 
 .stage[data-state="result"] .yoink { display: none; }

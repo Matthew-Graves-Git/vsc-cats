@@ -562,6 +562,9 @@ app.whenReady().then(() => {
     updateVisibility(); // started by hand for testing
     if (TEST) {
       testRun = require('./testRun')({ post: (m) => win.webContents.send('panel', m) });
+    } else {
+      // No extension to say whether a cat is out: the page waits on a blank screen for that.
+      win.webContents.on('did-finish-load', () => win.webContents.send('panel', { type: 'idle' }));
     }
     return;
   }

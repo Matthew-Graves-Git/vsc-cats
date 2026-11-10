@@ -25,7 +25,12 @@ export type DiscordEvent =
    */
   | { kind: 'rainStart'; existing?: boolean }
   /** Cat Bot's "cat rain has ended" (or, when we attached, the newest rain message was one). */
-  | { kind: 'rainEnd' };
+  | { kind: 'rainEnd' }
+  /**
+   * The channel was scanned (on start, and again whenever Discord re-renders the list). A rain or
+   * cat already there was emitted just before this.
+   */
+  | { kind: 'attached' };
 
 /** The question in Cat Bot's minigame modal, as scraped from Discord. */
 export interface MinigameForm {
@@ -954,6 +959,7 @@ export function observerScript(cfg: {
     if (pending) {
       handle(pending);
     }
+    emit({ kind: 'attached' });
     return true;
   };
 

@@ -21,6 +21,8 @@ const RESULT_WAIT_MS = 15_000;
  * ended" (rain cats come 1-2 s after each catch, so this only fires when something went wrong).
  */
 const RAIN_IDLE_MS = 5 * 60_000;
+/** Show Nyan anyway if the first check of the channel (is a cat out?) takes longer than this. */
+const FIRST_CHECK_MAX_MS = 20_000;
 const RAIN_START_DEFAULT = 'cat rain was started|started a short rain|\\brain will start\\b|\\brain extended\\b';
 const RAIN_END_DEFAULT = 'cat rain has ended';
 
@@ -58,6 +60,9 @@ let raining = false;
 let rainTimer: NodeJS.Timeout | undefined;
 /** Cancels the running Test Rain, if any. */
 let stopTestRain: (() => void) | undefined;
+/** Watching started but the channel hasn't been checked for a cat yet; the window shows no Nyan. */
+let waiting = false;
+let waitTimer: NodeJS.Timeout | undefined;
 
 const cfg = () => vscode.workspace.getConfiguration('catYoink');
 
@@ -222,16 +227,43 @@ async function startWatching(forceLogin = false) {
   browser = b;
 
   panel.show();
-  panel.idle();
+  beginWaiting();
   await b.start(forceLogin);
 }
 
 async function stopWatching() {
   await shutdown(true);
+  panel.idle(); // so "Show panel" later opens on Nyan, not the loading screen
   panel.hide();
 }
 
+/** Holds off Nyan until the channel has been checked for a cat that is already out. */
+function beginWaiting() {
+  clearTimeout(waitTimer);
+  waiting = true;
+  panel.loading();
+  waitTimer = setTimeout(endWaiting, FIRST_CHECK_MAX_MS);
+}
+
+/** The first check is done (or gave up): no cat was found, so show Nyan. */
+function endWaiting() {
+  if (!waiting) {
+    return;
+  }
+  stopWaiting();
+  if (!active) {
+    panel.idle();
+  }
+}
+
+function stopWaiting() {
+  clearTimeout(waitTimer);
+  waitTimer = undefined;
+  waiting = false;
+}
+
 async function shutdown(updateStatus = true) {
+  stopWaiting();
   clearTimers();
   active = undefined;
   endRain();
@@ -259,6 +291,7 @@ function onBrowserStatus(b: DiscordBrowser, s: BrowserStatus, detail?: string) {
       setStatus('Watching');
       break;
     case 'login':
+      endWaiting(); // Nyan while the user logs in
       setStatus('Login needed');
       if (detail) {
         void vscode.window
@@ -271,6 +304,7 @@ function onBrowserStatus(b: DiscordBrowser, s: BrowserStatus, detail?: string) {
       }
       break;
     case 'error':
+      endWaiting();
       setStatus('Error');
       void vscode.window.showErrorMessage(`Cat Yoink: ${detail ?? 'unknown error'}`);
       break;
@@ -336,6 +370,8 @@ async function onDiscordEvent(e: DiscordEvent) {
       return startRain(!!e.existing);
     case 'rainEnd':
       return endRain();
+    case 'attached':
+      return endWaiting();
   }
 }
 
@@ -370,6 +406,7 @@ function armRainTimer() {
 }
 
 async function onSpawn(e: Extract<DiscordEvent, { kind: 'spawn' }>) {
+  stopWaiting(); // the cat replaces the loading screen
   clearTimers();
   const trigger = cfg().get<string>('triggerText', 'appeared!');
   const caption = spawnCaption(e.text, trigger);

@@ -11,8 +11,9 @@
 </head>
 <body>
   <div class="stage" id="stage" data-state="idle">
-    <!-- One image for everything: panel.js swaps its src between Nyan, the surf intro, the cat loop and the return. -->
-    <img class="scene" id="scene" src="idle.gif" alt="" />
+    <!-- One image for everything: panel.js swaps its src between Nyan, the surf intro, the cat loop and the return.
+         No src yet: panel.js starts Nyan only once it knows no cat is already out. -->
+    <img class="scene" id="scene" alt="" />
 
     <!-- Drag anywhere to move the window; the 6px margin leaves the edges for resizing. -->
     <div class="drag" aria-hidden="true"></div>
