@@ -14,13 +14,16 @@ const fs = require('fs');
 const net = require('net');
 const path = require('path');
 
-const PIPE = process.env.CAT_YOINK_PIPE;
-const STATE = process.env.CAT_YOINK_STATE;
+// --test: a scripted run through every window event (window/testRun.js), no extension involved.
+const TEST = process.argv.includes('--test');
+const PIPE = TEST ? undefined : process.env.CAT_YOINK_PIPE;
+const STATE = TEST ? undefined : process.env.CAT_YOINK_STATE; // a test run keeps its own layout out of the saved one
 const MEDIA = path.join(__dirname, '..', 'media');
-let mode = process.platform === 'win32' && process.env.CAT_YOINK_MODE !== 'floating' ? 'inside' : 'floating';
+// The test run has no VS Code window to live inside.
+let mode = !TEST && process.platform === 'win32' && process.env.CAT_YOINK_MODE !== 'floating' ? 'inside' : 'floating';
 
 app.setName('Cat Yoink');
-if (process.env.CAT_YOINK_USER_DATA) {
+if (process.env.CAT_YOINK_USER_DATA && !TEST) {
   app.setPath('userData', process.env.CAT_YOINK_USER_DATA);
 }
 
@@ -29,6 +32,7 @@ let sock;
 let quitting = false;
 /** What the extension (or the X button) last asked for; inside mode may still keep it hidden. */
 let wantVisible = !PIPE; // started by hand for testing: show right away
+let testRun; // the --test script, once the window exists
 
 const send = (m) => {
   if (sock && !sock.destroyed) {
@@ -476,6 +480,10 @@ function setHover(inside) {
 
 /** The user closed the window (X / Alt+F4). */
 function hideWindow() {
+  if (TEST) {
+    quit(); // nothing would ever reopen it
+    return;
+  }
   wantVisible = false;
   saveState();
   win.hide();
@@ -499,6 +507,9 @@ function quit() {
 ipcMain.on('panel', (_e, m) => {
   if (!m || typeof m.type !== 'string') {
     return;
+  }
+  if (testRun) {
+    testRun.onPanel(m);
   }
   if (m.type === 'close') {
     hideWindow();
@@ -549,6 +560,9 @@ app.whenReady().then(() => {
   }
   if (!PIPE) {
     updateVisibility(); // started by hand for testing
+    if (TEST) {
+      testRun = require('./testRun')({ post: (m) => win.webContents.send('panel', m) });
+    }
     return;
   }
   sock = net.connect(PIPE);

@@ -137,6 +137,7 @@
     "compile": "tsc -p ./",
     "watch": "tsc -watch -p ./",
     "icons": "node scripts/build-icons.js",
+    "test-window": "node scripts/test-window.js",
     "sync-install": "node scripts/sync-install.js",
     "vscode:prepublish": "npm run compile",
     "package": "vsce package"

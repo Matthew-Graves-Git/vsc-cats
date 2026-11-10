@@ -6,6 +6,7 @@ import { CatWindow, TerminalMessage, windowModeSetting } from './catWindow';
 import { rainCats, rainScene, rainSet, surfSet } from './gifs';
 import { parseCatch, parseLateCatchers, sameName, spawnCaption, spawnTitle, spawnType, spawnWord } from './catText';
 import { OwnerLock } from './lock';
+import { TEST_ROUNDS, testResultText } from './testRounds';
 
 const CHANNEL_RE = /^https:\/\/(?:\w+\.)?discord(?:app)?\.com\/channels\/(\d+|@me)\/\d+\/?$/;
 const CONFIRM_TIMEOUT_MS = 30_000;
@@ -581,17 +582,11 @@ async function onTerminalMessage(m: { type: string; answer?: unknown }) {
       if (b.test) {
         b.stage = 'submitted';
         panel.terminal({ type: 'submitted' });
-        const right = answer.trim().toLowerCase() === b.test.answer.toLowerCase();
+        const result = testResultText(b.test, answer);
         setTimeout(() => {
           if (bonus === b) {
             clearBonus();
-            panel.terminal({
-              type: 'result',
-              win: right,
-              text: right
-                ? `@you got +3 ${b.test!.form.title} bonus cats. (test)`
-                : `Better luck next time!\nCorrect answer: ${b.test!.answer}\nYour answer: ${answer}`,
-            });
+            panel.terminal({ type: 'result', ...result });
           }
         }, 900);
         return;
@@ -625,54 +620,7 @@ async function onTerminalMessage(m: { type: string; answer?: unknown }) {
 
 /** Runs the terminal popup with made-up questions, no Discord involved. */
 function testTerminal() {
-  const rounds: { form: MinigameForm; answer: string }[] = [
-    {
-      form: {
-        title: 'Fine',
-        prompt:
-          "Count the amount of E's in this text\n\nThe quick brown fox jumps over the lazy dog. She sells sea shells by the sea shore.",
-        kind: 'text',
-        maxLength: 2,
-        timeLimitMs: 45_000,
-      },
-      answer: '10',
-    },
-    {
-      form: {
-        title: 'Brave',
-        prompt: 'Find the number whose digits only ascend',
-        kind: 'choice',
-        options: [
-          '918273', '123789', '554321', '987123', '135792', '246813', '112358', '975310', '864209',
-          '192837', '273645', '384756', '495867', '516273', '627384', '738495', '849516', '951627',
-          '162738', '273849', '384951', '495162', '516384', '627495', '738516',
-        ],
-        timeLimitMs: 45_000,
-      },
-      answer: '123789',
-    },
-    {
-      form: {
-        title: 'Corrupt',
-        prompt: 'How many 1s are in this binary number?\n\n10110010111000101101001110100101100111010010110100',
-        kind: 'text',
-        maxLength: 2,
-        timeLimitMs: 45_000,
-      },
-      answer: '26',
-    },
-    {
-      form: {
-        title: 'Real',
-        prompt: 'Which planet in our solar system has the most confirmed moons as of the latest count?',
-        kind: 'choice',
-        options: ['Saturn', 'Jupiter', 'Uranus, the ice giant tipped on its side', 'Neptune'],
-        timeLimitMs: 45_000,
-      },
-      answer: 'Saturn',
-    },
-  ];
-  const round = rounds[testRound++ % rounds.length];
+  const round = TEST_ROUNDS[testRound++ % TEST_ROUNDS.length];
   clearBonus();
   bonus = { id: 'test', stage: 'offer', test: round };
   panel.terminal({

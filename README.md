@@ -28,7 +28,7 @@ When Cat Bot starts a cat rain in the channel (`/rain`, Catnip's "started a shor
 4. After the exit, the next cat's enter plays if one is already out, otherwise `rain_no_cat.gif` again.
 5. When Cat Bot says "cat rain has ended", the last cat exits as usual and `nyan_enters_rain_clears.gif` brings Nyan back.
 
-A surfing cat that is still out when a rain starts keeps surfing; once it has returned, the rain starts from Nyan. Cat types without rain GIFs keep the empty storm on screen under the caption. If watching starts (or the window reopens) mid-rain, it goes straight to the storm. If Cat Bot's end message is missed, the storm clears after 5 minutes without a new cat. Yoinking and counting work the same as for any other cat. **Cat Yoink: Test Cat Rain** plays a short made-up rain (three cats) in the window, without Discord.
+A surfing cat that is still out when a rain starts keeps surfing; once it has returned, the rain starts from Nyan. Cat types without rain GIFs keep the empty storm on screen under the caption. If watching starts (or the window reopens) mid-rain, it goes straight to the storm. If Cat Bot's end message is missed, the storm clears after 5 minutes without a new cat. Yoinking and counting work the same as for any other cat. **Cat Yoink: Test Cat Rain** plays a short made-up rain (three cats) in the window, without Discord. `npm run test-window` (or `electron window/main.js --test`) opens a window by itself, with no VS Code or Discord, and runs through every event: a random cat to Yoink, a bonus minigame, then a cat rain with two random cats. Each step waits for your click and moves on by itself after a timeout.
 
 ## Bonus-cat minigame terminal
 
