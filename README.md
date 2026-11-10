@@ -18,6 +18,18 @@ While no cat is around the window plays a looping Nyan Cat GIF with an animated 
 - The **X** in the corner (shown only while the cursor is over the window) hides it. Watching continues, and the window pops back up when the next cat appears (or run **Cat Yoink: Show Panel**).
 - It never takes focus when it appears, so it doesn't interrupt typing.
 
+## Cat rain
+
+When Cat Bot starts a cat rain in the channel (`/rain`, Catnip's "started a short rain!", a rain boost, or "RAIN EXTENDED"), the window switches to the thunderstorm GIFs in `media/gifs/cat_thunderstorm_event/`:
+
+1. Nyan finishes its current loop, then `nyan_exits_rain_starts.gif` plays once.
+2. If a cat is already out, its `<cat>_rain_enter.gif` plays straight away; otherwise `rain_no_cat.gif` loops until one appears (the cat enters at the end of the current storm loop).
+3. The cat's `<cat>_rain.gif` loops until it is gone (yoinked, or caught by someone else). Then the loop finishes and `<cat>_rain_exit.gif` plays once.
+4. After the exit, the next cat's enter plays if one is already out, otherwise `rain_no_cat.gif` again.
+5. When Cat Bot says "cat rain has ended", the last cat exits as usual and `nyan_enters_rain_clears.gif` brings Nyan back.
+
+A surfing cat that is still out when a rain starts keeps surfing; once it has returned, the rain starts from Nyan. Cat types without rain GIFs keep the empty storm on screen under the caption. If watching starts (or the window reopens) mid-rain, it goes straight to the storm. If Cat Bot's end message is missed, the storm clears after 5 minutes without a new cat. Yoinking and counting work the same as for any other cat. **Cat Yoink: Test Cat Rain** plays a short made-up rain (three cats) in the window, without Discord.
+
 ## Bonus-cat minigame terminal
 
 When Cat Bot posts a **BONUS … CAT!** for a cat you caught (first or late), a green retro terminal grows out of its bottom-right corner, ending up centered in the window with an equal 8px margin on every side and a slightly see-through (80% opaque) background, and types out the offer. Click **[ GO! ]** within Cat Bot's 10 seconds and Cat Yoink presses Go! in Discord, then types out the minigame question. Type your answer (or the option number) and press Enter; Cat Bot's reply is typed out, and the terminal closes itself after a few seconds (or click its X). The text shrinks to fit the box; at very small window sizes long questions scroll. **Cat Yoink: Test Minigame Terminal** runs the whole thing with made-up questions.
@@ -37,7 +49,7 @@ Uses your installed Edge or Chrome (auto-detected, or set `catYoink.browserPath`
 
 ## Commands
 
-`Cat Yoink: Set Discord Channel`, `Start Watching`, `Stop Watching`, `Log In To Discord`, `Show Panel`, `Attach Window Here`, `Reset Catch Count`, `Test Minigame Terminal`, `Menu` (also the status bar item).
+`Cat Yoink: Set Discord Channel`, `Start Watching`, `Stop Watching`, `Log In To Discord`, `Show Panel`, `Attach Window Here`, `Reset Catch Count`, `Test Minigame Terminal`, `Test Cat Rain`, `Menu` (also the status bar item).
 
 ## Settings
 
@@ -48,6 +60,8 @@ Uses your installed Edge or Chrome (auto-detected, or set `catYoink.browserPath`
 | `catYoink.triggerText` | `appeared!` | Regex (case-insensitive) meaning a cat spawned |
 | `catYoink.caughtText` | `\bc[a-z]*ught` | Regex (case-insensitive) meaning someone caught it; matches Cat Bot's "caught", "cought", "coought"… |
 | `catYoink.replyText` | `cat` | What Yoink sends |
+| `catYoink.rainStartText` | `cat rain was started\|started a short rain\|\brain will start\b\|\brain extended\b` | Regex (case-insensitive) meaning a cat rain started |
+| `catYoink.rainEndText` | `cat rain has ended` | Regex (case-insensitive) meaning the cat rain is over |
 | `catYoink.browserPath` | auto | Edge/Chrome executable |
 | `catYoink.autoStart` | `true` | Open the window and start watching every time VS Code starts |
 | `catYoink.windowMode` | `insideVSCode` | `insideVSCode`: kept inside the watching VS Code window (Windows only). `floating`: free and always on top |

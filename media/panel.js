@@ -21,21 +21,39 @@
   //   nyan --(cat appears)--> [finish nyan loop] surf (once) -> loop ...
   //   loop --(yoink / cat gone)--> [finish loop] return (once) -> nyan ...
   //
+  // During a cat rain (Cat Bot spawns the next cat 1-2 s after each catch) the storm replaces it:
+  //
+  //   nyan --(rain starts)--> [finish nyan loop] rainStart (once) -> next()
+  //   rainEmpty --(cat appears / rain over)--> [finish loop] next()
+  //   rainEnter (once) -> rainLoop --(yoink / cat gone)--> [finish loop] rainExit (once) -> next()
+  //   rainClear (once) -> nyan
+  //
+  //   next(), on the empty storm's first frame: a cat is out ? rainEnter
+  //                                           : rain over  ? rainClear
+  //                                           :              rainEmpty
+  //
+  // A surfing cat still out when the rain starts keeps surfing; after its return, the rain starts
+  // from Nyan.
+  //
   // The scene <img> never reports "loop finished", so we time it: every GIF is restarted when it
   // is assigned (the ?t= makes the URL new), and we note when it started. "Finish the current
-  // loop" is then dur - (elapsed % dur). The surf GIFs repeat forever on their own, so the surf
-  // and return swaps are timed too.
+  // loop" is then dur - (elapsed % dur). Some one-shot GIFs repeat forever on their own, so every
+  // one-shot swap is timed too.
 
   const NYAN = 'idle.gif';
-  let phase = 'nyan'; // nyan | surf | loop | return
+  // nyan | surf | loop | return | rainStart | rainEmpty | rainEnter | rainLoop | rainExit | rainClear
+  let phase = 'nyan';
   let phaseStart = null; // performance.now() when the current GIF began, null until it has loaded
-  let showing = null; // cat set on screen (surf/loop/return), null while Nyan
-  let target = null; // cat set we want on screen, null = Nyan
+  let showing = null; // the spawn on screen ({ id, surf, rain }) while a cat is drawn, else null
+  let target = null; // the spawn we want on screen, null = no cat
+  let raining = false;
+  let storm = null; // the shared rain clips (RainScene) of the current or last rain
   let timer;
   let playedAt = 0;
   let lag = 0; // how long a src swap takes to show its first frame; swaps fire this much early
 
-  const same = (a, b) => !!a && !!b && a.key === b.key;
+  // By spawn id, not cat type: rain cats of one type come back to back and each exits and enters.
+  const same = (a, b) => !!a && !!b && a.id === b.id;
 
   function play(src, nextPhase) {
     clearTimeout(timer);
@@ -70,36 +88,80 @@
 
     switch (phase) {
       case 'nyan':
-        if (target) {
+        if (raining) {
+          const s = storm;
+          at(toEnd(s.nyanMs), () => play(s.start, 'rainStart'));
+        } else if (target && target.surf) {
           const t = target;
-          at(toEnd(t.nyanMs), () => {
+          at(toEnd(t.surf.nyanMs), () => {
             showing = t;
-            play(t.surf, 'surf');
+            play(t.surf.surf, 'surf');
           });
         }
         break;
       case 'surf':
         // Play the whole intro; then loop, or head straight home if the cat is already gone.
-        at(showing.surfMs - elapsed, () =>
-          same(target, showing) ? play(showing.loop, 'loop') : play(showing.ret, 'return')
+        at(showing.surf.surfMs - elapsed, () =>
+          same(target, showing) ? play(showing.surf.loop, 'loop') : play(showing.surf.ret, 'return')
         );
         break;
       case 'loop':
         if (!same(target, showing)) {
-          at(toEnd(showing.loopMs), () => play(showing.ret, 'return'));
+          at(toEnd(showing.surf.loopMs), () => play(showing.surf.ret, 'return'));
         }
         break;
       case 'return':
-        at(showing.retMs - elapsed, () => {
+        at(showing.surf.retMs - elapsed, () => {
           showing = null;
           play(NYAN, 'nyan');
         });
         break;
+
+      case 'rainStart':
+        at(storm.startMs - elapsed, next);
+        break;
+      case 'rainEmpty':
+        // A cat type without rain GIFs leaves the empty storm looping under the caption.
+        if (!raining || (target && target.rain)) {
+          at(toEnd(storm.emptyMs), next);
+        }
+        break;
+      case 'rainEnter':
+        at(showing.rain.enterMs - elapsed, () =>
+          same(target, showing) ? play(showing.rain.loop, 'rainLoop') : play(showing.rain.exit, 'rainExit')
+        );
+        break;
+      case 'rainLoop':
+        if (!same(target, showing)) {
+          at(toEnd(showing.rain.loopMs), () => play(showing.rain.exit, 'rainExit'));
+        }
+        break;
+      case 'rainExit':
+        at(showing.rain.exitMs - elapsed, () => {
+          showing = null;
+          next();
+        });
+        break;
+      case 'rainClear':
+        at(storm.clearMs - elapsed, () => play(NYAN, 'nyan'));
+        break;
     }
   }
 
-  function setTarget(set) {
-    target = set || null;
+  /** On the empty storm's first frame: bring in the waiting cat, clear up, or keep raining. */
+  function next() {
+    if (raining && target && target.rain) {
+      showing = target;
+      play(target.rain.enter, 'rainEnter');
+    } else if (!raining) {
+      play(storm.clear, 'rainClear');
+    } else {
+      play(storm.empty, 'rainEmpty');
+    }
+  }
+
+  function setTarget(spawn) {
+    target = spawn || null;
     plan();
   }
 
@@ -164,20 +226,37 @@
         stage.classList.remove('has-cat'); // back to "Yoinked N Cats"
         setTarget(null);
         break;
-      case 'spawn':
+      case 'spawn': {
         busy = false;
         appeared.textContent = m.title || '';
         stage.classList.add('has-cat'); // the title replaces the counter until idle
         status.textContent = '';
         yoink.disabled = false;
         setState('spawn');
-        if (m.skipIntro && m.surf && !showing) {
-          // The cat was already there when Cat Yoink started: straight to its loop, no surf-in.
-          target = showing = m.surf;
-          play(m.surf.loop, 'loop');
+        const spawn = { id: m.id, surf: m.surf, rain: m.rain };
+        const gifs = raining ? m.rain : m.surf;
+        if (m.skipIntro && gifs && !showing) {
+          // The cat was already there when Cat Yoink started: straight to its loop, no intro.
+          target = showing = spawn;
+          play(gifs.loop, raining ? 'rainLoop' : 'loop');
         } else {
-          // A cat type without GIFs has no surf set: Nyan keeps looping under the overlay.
-          setTarget(m.surf);
+          // A cat type without GIFs keeps Nyan (or the empty storm) looping under the overlay.
+          setTarget(spawn);
+        }
+        break;
+      }
+      case 'rain':
+        if (m.on && m.scene) {
+          raining = true;
+          storm = m.scene;
+          if (m.skipIntro && phase === 'nyan' && !showing) {
+            play(storm.empty, 'rainEmpty'); // it was already raining: straight to the storm
+          } else {
+            plan();
+          }
+        } else if (raining) {
+          raining = false;
+          plan();
         }
         break;
       case 'tooSlow':

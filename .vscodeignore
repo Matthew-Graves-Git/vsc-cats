@@ -6,6 +6,8 @@ media/gifs/index.html
 media/gifs/preview.png
 media/gifs/README.txt
 media/gifs/design_notes.txt
+media/gifs/cat_thunderstorm_event/README.txt
+media/gifs/cat_thunderstorm_event/preview.png
 scripts/**
 **/*.map
 .gitignore

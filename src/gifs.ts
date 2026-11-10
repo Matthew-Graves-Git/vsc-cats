@@ -66,29 +66,108 @@ export function gifDurationMs(file: string): number {
   return total;
 }
 
-let catalog: { dir: string; cats: Map<string, string> } | undefined;
+/** The GIFs for one cat during a cat rain. Paths are relative to media/. */
+export interface RainCat {
+  /** The cat walks in from the right. Starts on rain_no_cat's first frame, ends on `loop`'s first frame. Shown once. */
+  enter: string;
+  /** The cat in the storm. Loops. */
+  loop: string;
+  /** The cat leaves to the left. Ends on rain_no_cat's first frame. Shown once. */
+  exit: string;
+  enterMs: number;
+  loopMs: number;
+  exitMs: number;
+}
+
+/** The storm clips every cat rain shares. Paths are relative to media/. */
+export interface RainScene {
+  /** Nyan leaves, the rain starts. Starts on idle.gif's last frame, ends on `empty`'s first frame. Shown once. */
+  start: string;
+  /** Storm with no cat. Loops. */
+  empty: string;
+  /** Nyan comes back, the rain stops. Ends on idle.gif's first frame. Shown once. */
+  clear: string;
+  startMs: number;
+  emptyMs: number;
+  clearMs: number;
+  /** Length of one idle.gif (Nyan) loop. */
+  nyanMs: number;
+}
+
+/** Folder (under media/gifs) of the cat rain clips. */
+const RAIN_DIR = 'cat_thunderstorm_event';
+
+const catalogs = new Map<string, Map<string, string>>();
+
+/**
+ * Lowercased cat name -> file prefix, for the files in `dir` whose name matches `re`
+ * (the prefix is the regex's first group).
+ */
+function catalog(dir: string, re: RegExp): Map<string, string> {
+  const key = `${dir}|${re.source}`;
+  let cats = catalogs.get(key);
+  if (!cats) {
+    cats = new Map<string, string>();
+    try {
+      for (const f of fs.readdirSync(dir)) {
+        const m = re.exec(f);
+        if (m) {
+          cats.set(m[1].toLowerCase(), m[1]);
+        }
+      }
+    } catch {
+      // no such folder
+    }
+    catalogs.set(key, cats);
+  }
+  return cats;
+}
 
 /**
  * The cats that have GIFs: lowercased name -> file prefix, from media/gifs/<prefix>_01_surf.gif.
  * The prefix is the part of the file name before the first "_".
  */
 export function surfCats(extensionPath: string): Map<string, string> {
-  const dir = path.join(extensionPath, 'media', 'gifs');
-  if (catalog?.dir !== dir) {
-    const cats = new Map<string, string>();
-    try {
-      for (const f of fs.readdirSync(dir)) {
-        const m = /^([^_]+)_01_surf\.gif$/i.exec(f);
-        if (m) {
-          cats.set(m[1].toLowerCase(), m[1]);
-        }
-      }
-    } catch {
-      // no gifs folder
-    }
-    catalog = { dir, cats };
+  return catalog(path.join(extensionPath, 'media', 'gifs'), /^([^_]+)_01_surf\.gif$/i);
+}
+
+/** The cats that have rain GIFs, from media/gifs/cat_thunderstorm_event/<prefix>_rain_enter.gif. */
+export function rainCats(extensionPath: string): Map<string, string> {
+  return catalog(path.join(extensionPath, 'media', 'gifs', RAIN_DIR), /^([^_]+)_rain_enter\.gif$/i);
+}
+
+/** The rain GIFs for the word before "cat" in a spawn message, or undefined if there are none. */
+export function rainSet(extensionPath: string, word: string | undefined): RainCat | undefined {
+  const prefix = word ? rainCats(extensionPath).get(word.toLowerCase()) : undefined;
+  if (!prefix) {
+    return undefined;
   }
-  return catalog.cats;
+  const media = path.join(extensionPath, 'media');
+  const enter = `gifs/${RAIN_DIR}/${prefix}_rain_enter.gif`;
+  const loop = `gifs/${RAIN_DIR}/${prefix}_rain.gif`;
+  const exit = `gifs/${RAIN_DIR}/${prefix}_rain_exit.gif`;
+  const ms = (rel: string) => gifDurationMs(path.join(media, rel));
+  const set: RainCat = { enter, loop, exit, enterMs: ms(enter), loopMs: ms(loop), exitMs: ms(exit) };
+  return set.enterMs && set.loopMs && set.exitMs ? set : undefined;
+}
+
+/** The shared cat rain clips, or undefined if any is missing (then rain looks like any other time). */
+export function rainScene(extensionPath: string): RainScene | undefined {
+  const media = path.join(extensionPath, 'media');
+  const start = `gifs/${RAIN_DIR}/nyan_exits_rain_starts.gif`;
+  const empty = `gifs/${RAIN_DIR}/rain_no_cat.gif`;
+  const clear = `gifs/${RAIN_DIR}/nyan_enters_rain_clears.gif`;
+  const ms = (rel: string) => gifDurationMs(path.join(media, rel));
+  const scene: RainScene = {
+    start,
+    empty,
+    clear,
+    startMs: ms(start),
+    emptyMs: ms(empty),
+    clearMs: ms(clear),
+    nyanMs: ms('idle.gif'),
+  };
+  return scene.startMs && scene.emptyMs && scene.clearMs && scene.nyanMs ? scene : undefined;
 }
 
 /**

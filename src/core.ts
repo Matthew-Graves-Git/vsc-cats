@@ -3,7 +3,7 @@ import * as vscode from 'vscode';
 import * as path from 'path';
 import { BrowserStatus, DiscordBrowser, DiscordEvent, MinigameForm } from './discordBrowser';
 import { CatWindow, TerminalMessage, windowModeSetting } from './catWindow';
-import { surfSet } from './gifs';
+import { rainCats, rainScene, rainSet, surfSet } from './gifs';
 import { parseCatch, parseLateCatchers, sameName, spawnCaption, spawnTitle, spawnType, spawnWord } from './catText';
 import { OwnerLock } from './lock';
 
@@ -15,6 +15,13 @@ const LATE_WAIT_MS = 8_000;
 /** A bonus message this soon after our catch is ours to play. */
 const BONUS_AFTER_CATCH_MS = 120_000;
 const RESULT_WAIT_MS = 15_000;
+/**
+ * A cat rain with no new cat for this long is over, even if we missed Cat Bot's "cat rain has
+ * ended" (rain cats come 1-2 s after each catch, so this only fires when something went wrong).
+ */
+const RAIN_IDLE_MS = 5 * 60_000;
+const RAIN_START_DEFAULT = 'cat rain was started|started a short rain|\\brain will start\\b|\\brain extended\\b';
+const RAIN_END_DEFAULT = 'cat rain has ended';
 
 interface ActiveCat {
   id: string;
@@ -45,6 +52,11 @@ let idleTimer: NodeJS.Timeout | undefined;
 let lastCatch: { at: number; type: string } | undefined;
 let bonus: Bonus | undefined;
 let testRound = 0;
+/** A cat rain is on (and its GIFs are installed). */
+let raining = false;
+let rainTimer: NodeJS.Timeout | undefined;
+/** Cancels the running Test Rain, if any. */
+let stopTestRain: (() => void) | undefined;
 
 const cfg = () => vscode.workspace.getConfiguration('catYoink');
 
@@ -86,6 +98,7 @@ export function activate(context: vscode.ExtensionContext) {
     panel.setCount(0);
   });
   reg('catYoink.testTerminal', testTerminal);
+  reg('catYoink.testRain', testRain);
   reg('catYoink.attachWindow', () => {
     if (!browser && lock.isHeldByOther()) {
       void vscode.window.showInformationMessage('Cat Yoink is running in another VS Code window.');
@@ -127,6 +140,7 @@ export function activate(context: vscode.ExtensionContext) {
 /** Stops the browser and closes the cat window; resolves once both are gone. */
 export async function deactivate(): Promise<void> {
   clearBonus();
+  stopTestRain?.();
   await Promise.all([panel?.dispose(), shutdown()]);
 }
 
@@ -198,6 +212,8 @@ async function startWatching(forceLogin = false) {
     triggerText: c.get<string>('triggerText', 'appeared!'),
     caughtText: c.get<string>('caughtText', '\\bc[a-z]*ught'),
     replyText: c.get<string>('replyText', 'cat'),
+    rainStartText: c.get<string>('rainStartText', RAIN_START_DEFAULT),
+    rainEndText: c.get<string>('rainEndText', RAIN_END_DEFAULT),
     dumpDir: path.join(storage, 'minigame-dumps'),
   });
   b.onEvent = (e) => void onDiscordEvent(e);
@@ -217,6 +233,7 @@ async function stopWatching() {
 async function shutdown(updateStatus = true) {
   clearTimers();
   active = undefined;
+  endRain();
   const b = browser;
   browser = undefined;
   if (b) {
@@ -282,6 +299,9 @@ function isMe(name: string | undefined): boolean {
 // ---------- cat flow ----------
 
 async function onDiscordEvent(e: DiscordEvent) {
+  if (e.kind === 'spawn' || (e.kind === 'rainStart' && !raining)) {
+    stopTestRain?.(); // the real channel wins
+  }
   switch (e.kind) {
     case 'spawn':
       return onSpawn(e);
@@ -311,7 +331,41 @@ async function onDiscordEvent(e: DiscordEvent) {
         panel.terminal({ type: 'result', text: e.text, win: e.win });
       }
       return;
+    case 'rainStart':
+      return startRain(!!e.existing);
+    case 'rainEnd':
+      return endRain();
   }
+}
+
+// ---------- cat rain ----------
+
+/** Cat Bot started (or extended) a cat rain. `existing`: it was already raining when we attached. */
+function startRain(existing: boolean) {
+  armRainTimer();
+  if (raining) {
+    return;
+  }
+  const scene = rainScene(ctx.extensionPath);
+  if (!scene) {
+    return; // no rain GIFs installed: rain looks like any other time
+  }
+  raining = true;
+  panel.rain(scene, existing);
+}
+
+function endRain() {
+  clearTimeout(rainTimer);
+  rainTimer = undefined;
+  if (raining) {
+    raining = false;
+    panel.rain(undefined);
+  }
+}
+
+function armRainTimer() {
+  clearTimeout(rainTimer);
+  rainTimer = setTimeout(endRain, RAIN_IDLE_MS);
 }
 
 async function onSpawn(e: Extract<DiscordEvent, { kind: 'spawn' }>) {
@@ -320,7 +374,11 @@ async function onSpawn(e: Extract<DiscordEvent, { kind: 'spawn' }>) {
   const caption = spawnCaption(e.text, trigger);
   const type = spawnType(caption, trigger);
   active = { id: e.id, yoinked: false, resolved: false, type };
-  panel.spawn(spawnTitle(type), surfSet(ctx.extensionPath, spawnWord(caption, trigger)), !!e.existing);
+  if (raining) {
+    armRainTimer();
+  }
+  const word = spawnWord(caption, trigger);
+  panel.spawn(e.id, spawnTitle(type), surfSet(ctx.extensionPath, word), rainSet(ctx.extensionPath, word), !!e.existing);
 }
 
 function countCatch(type: string) {
@@ -622,4 +680,56 @@ function testTerminal() {
     text: `BONUS ${round.form.title.toUpperCase()} CAT! (test)\nAnyone who cought this cat can play a minigame and potentially get +3 more!`,
     test: true,
   } as TerminalMessage);
+}
+
+/**
+ * Plays a short made-up cat rain in the window (no Discord involved): the storm starts, a few
+ * random cats come and go, and the storm clears. Real Discord events cancel it.
+ */
+function testRain() {
+  const scene = rainScene(ctx.extensionPath);
+  if (!scene) {
+    void vscode.window.showErrorMessage('Cat Yoink: the cat rain GIFs (media/gifs/cat_thunderstorm_event) are missing.');
+    return;
+  }
+  if (raining || active) {
+    void vscode.window.showInformationMessage('Cat Yoink: a real cat is out or a real rain is on; try again later.');
+    return;
+  }
+  stopTestRain?.();
+  const timers: NodeJS.Timeout[] = [];
+  const later = (ms: number, fn: () => void) => timers.push(setTimeout(fn, ms));
+  stopTestRain = () => {
+    timers.forEach(clearTimeout);
+    stopTestRain = undefined;
+    panel.rain(undefined); // a real rain can't have started: it cancels the test first
+    if (!active) {
+      panel.idle(); // the test cat goes away; a real one is about to replace it otherwise
+    }
+  };
+
+  const names = [...rainCats(ctx.extensionPath).keys()];
+  const pick = () => names[Math.floor(Math.random() * names.length)];
+  // Every clip is 2.5 s, so a cat needs ~9 s out to be seen looping between its enter and exit.
+  // After each catch, the next cat comes 1.5 s later (a cat waiting as the exit ends walks straight
+  // in), except once: a 7 s gap that leaves the empty storm on screen.
+  const gaps = [1_500, 7_000, 1_500];
+  const stamp = Date.now();
+  panel.rain(scene);
+  let t = 1_000; // the first cat is waiting by the end of the rain start transition
+  gaps.forEach((gap, i) => {
+    const word = pick();
+    const name = word.charAt(0).toUpperCase() + word.slice(1);
+    later(t, () =>
+      panel.spawn(`test-rain-${stamp}-${i}`, spawnTitle(`${name} cat`), surfSet(ctx.extensionPath, word), rainSet(ctx.extensionPath, word))
+    );
+    t += 9_000;
+    later(t, () => panel.result(`${name} cat Yoinked! (test)`, true));
+    t += gap;
+  });
+  later(t, () => {
+    panel.rain(undefined);
+    panel.idle();
+    stopTestRain = undefined;
+  });
 }

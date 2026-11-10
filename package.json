@@ -48,6 +48,10 @@
         "title": "Cat Yoink: Test Minigame Terminal"
       },
       {
+        "command": "catYoink.testRain",
+        "title": "Cat Yoink: Test Cat Rain"
+      },
+      {
         "command": "catYoink.attachWindow",
         "title": "Cat Yoink: Attach Window Here"
       },
@@ -88,6 +92,16 @@
           "type": "string",
           "default": "cat",
           "description": "Message sent to the channel when you press Yoink."
+        },
+        "catYoink.rainStartText": {
+          "type": "string",
+          "default": "cat rain was started|started a short rain|\\brain will start\\b|\\brain extended\\b",
+          "description": "Case-insensitive regular expression matched against Cat Bot's messages that means a cat rain started. The default covers /rain (\"5m cat rain was started by...\"), Catnip (\"Catnip started a short rain!\"), rain boosts (\"A 5m rain will start!\") and \"RAIN EXTENDED\"."
+        },
+        "catYoink.rainEndText": {
+          "type": "string",
+          "default": "cat rain has ended",
+          "description": "Case-insensitive regular expression matched against Cat Bot's messages that means the cat rain is over."
         },
         "catYoink.autoStart": {
           "type": "boolean",

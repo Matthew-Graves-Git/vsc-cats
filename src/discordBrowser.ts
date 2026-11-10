@@ -18,7 +18,14 @@ export type DiscordEvent =
   | { kind: 'bonus'; id: string; text: string; mentionsMe: boolean }
   | { kind: 'bonusGone'; id: string }
   /** Cat Bot's answer to our minigame submission (✅ win, ❌ wrong / too slow / not eligible). */
-  | { kind: 'minigameResult'; text: string; win: boolean };
+  | { kind: 'minigameResult'; text: string; win: boolean }
+  /**
+   * Cat Bot started (or extended) a cat rain. `existing`: the newest rain message in the channel
+   * when we attached was a start, so it was already raining.
+   */
+  | { kind: 'rainStart'; existing?: boolean }
+  /** Cat Bot's "cat rain has ended" (or, when we attached, the newest rain message was one). */
+  | { kind: 'rainEnd' };
 
 /** The question in Cat Bot's minigame modal, as scraped from Discord. */
 export interface MinigameForm {
@@ -43,6 +50,9 @@ export interface BrowserOptions {
   triggerText: string;
   caughtText: string;
   replyText: string;
+  /** Case-insensitive regexes for Cat Bot's cat rain start and end messages. */
+  rainStartText: string;
+  rainEndText: string;
   /** Where to save a copy of each minigame modal's HTML (to fix selectors if Discord changes). */
   dumpDir?: string;
 }
@@ -558,6 +568,8 @@ export class DiscordBrowser {
       trigger: this.opts.triggerText,
       caught: this.opts.caughtText,
       reply: this.opts.replyText,
+      rainStart: this.opts.rainStartText,
+      rainEnd: this.opts.rainEndText,
     });
 
     this.onStatus('watching');
@@ -662,7 +674,14 @@ export function modalScript(action: string): unknown {
  * Runs inside the Discord page. Written as a plain function so it can be passed to
  * page.evaluate; it must not reference anything outside its own scope.
  */
-export function observerScript(cfg: { bot: string; trigger: string; caught: string; reply: string }): void {
+export function observerScript(cfg: {
+  bot: string;
+  trigger: string;
+  caught: string;
+  reply: string;
+  rainStart: string;
+  rainEnd: string;
+}): void {
   const w = window as any;
   if (w.__catYoinkObserver) {
     w.__catYoinkObserver.disconnect();
@@ -686,6 +705,11 @@ export function observerScript(cfg: { bot: string; trigger: string; caught: stri
   };
   const isTrigger = toMatcher(cfg.trigger);
   const isCaught = toMatcher(cfg.caught);
+  const isRainStart = toMatcher(cfg.rainStart);
+  const isRainEnd = toMatcher(cfg.rainEnd);
+  /** 'start' / 'end' for Cat Bot's cat rain messages, else null. The end is checked first. */
+  const rainKind = (text: string): 'start' | 'end' | null =>
+    isRainEnd(text) ? 'end' : isRainStart(text) ? 'start' : null;
   const isLate = (text: string) => /\bLate\b.+\bcatchers:/i.test(text);
   const isBonus = (text: string) => /\bBONUS\b[\s\S]*\bCAT!/i.test(text);
   const isMinigameWin = (text: string) => /\bgot \+\d+\b[\s\S]*\bbonus cats?\b/i.test(text);
@@ -788,6 +812,16 @@ export function observerScript(cfg: { bot: string; trigger: string; caught: stri
     const lower = text.toLowerCase();
     const isBot = author.toLowerCase() === botLower;
 
+    // Rain first, and without returning: Catnip's "started a short rain!" is added to the end of a
+    // catch message, which still has to be handled as a catch below.
+    if (isBot && !seen.has(id + ':rain')) {
+      const rain = rainKind(text);
+      if (rain) {
+        seen.add(id + ':rain');
+        emit({ kind: rain === 'end' ? 'rainEnd' : 'rainStart' });
+      }
+    }
+
     if (isBot && isTrigger(text)) {
       if (seen.has(id + ':spawn')) {
         return;
@@ -849,7 +883,7 @@ export function observerScript(cfg: { bot: string; trigger: string; caught: stri
   const scan = (root: ParentNode, markOnly: boolean) => {
     root.querySelectorAll('li[id^="chat-messages-"]').forEach((li) => {
       if (markOnly) {
-        for (const k of [':spawn', ':caught', ':late', ':bonus', ':result']) {
+        for (const k of [':spawn', ':caught', ':late', ':bonus', ':result', ':rain']) {
           seen.add(li.id + k);
         }
       } else {
@@ -867,7 +901,18 @@ export function observerScript(cfg: { bot: string; trigger: string; caught: stri
     // catchable. Surface the newest one we haven't reported; everything else is history.
     const items = Array.from(list.querySelectorAll('li[id^="chat-messages-"]'));
     const pending = items.filter((li) => !seen.has(li.id + ':spawn') && isSpawn(li)).pop();
+    // Is it raining? The newest rain message on screen says (it's also how a missed start or end
+    // is caught up on after Discord re-renders the list). Core ignores a state it is already in.
+    let rainNow: 'start' | 'end' | null = null;
+    for (let i = items.length - 1; i >= 0 && !rainNow; i--) {
+      if (authorOf(items[i]).toLowerCase() === botLower) {
+        rainNow = rainKind(textOf(items[i]));
+      }
+    }
     scan(list, true);
+    if (rainNow) {
+      emit(rainNow === 'end' ? { kind: 'rainEnd' } : { kind: 'rainStart', existing: true });
+    }
     if (pending) {
       existingId = pending.id;
       seen.delete(pending.id + ':spawn');

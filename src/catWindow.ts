@@ -4,7 +4,7 @@ import * as fs from 'fs';
 import * as net from 'net';
 import * as os from 'os';
 import * as path from 'path';
-import type { SurfSet } from './gifs';
+import type { RainCat, RainScene, SurfSet } from './gifs';
 import { run } from './discordBrowser';
 import type { MinigameForm } from './discordBrowser';
 
@@ -50,8 +50,16 @@ export type TerminalMessage =
 
 export type PanelMessage =
   | { type: 'idle' }
-  /** `skipIntro`: the cat was already there, so show its surf loop right away (no Nyan → surf-in). */
-  | { type: 'spawn'; title: string; surf?: SurfSet; skipIntro?: boolean }
+  /**
+   * `id`: the spawn message's id, so two cats of the same type in a row are told apart.
+   * `skipIntro`: the cat was already there, so show its loop right away (no surf-in / rain enter).
+   */
+  | { type: 'spawn'; id: string; title: string; surf?: SurfSet; rain?: RainCat; skipIntro?: boolean }
+  /**
+   * A cat rain started (`scene` set) or ended (`on` false). `skipIntro`: it was already raining,
+   * so show the storm right away (no Nyan → rain start transition).
+   */
+  | { type: 'rain'; on: boolean; scene?: RainScene; skipIntro?: boolean }
   | { type: 'tooSlow'; text: string }
   | { type: 'status'; text: string }
   | { type: 'result'; text: string; caught: boolean }
@@ -82,6 +90,8 @@ export class CatWindow {
   private ready = false;
   private queue: PanelMessage[] = [];
   private last: PanelMessage = { type: 'idle' };
+  /** The rain message while a cat rain is on, replayed (before `last`) to a fresh window. */
+  private rainMsg?: Extract<PanelMessage, { type: 'rain' }>;
   private count = 0;
   private mode: WindowMode = windowModeSetting();
   /** We asked for the window to be shown and the user hasn't closed it since. */
@@ -151,11 +161,26 @@ export class CatWindow {
     this.send(this.last);
   }
 
-  /** A cat appeared. `surf` animates it in; without one, Nyan keeps looping under the overlay. */
-  spawn(title: string, surf?: SurfSet, skipIntro = false): void {
+  /**
+   * A cat appeared. `surf` (or `rain`, during a cat rain) animates it in; without one, Nyan (or the
+   * empty storm) keeps looping under the overlay.
+   */
+  spawn(id: string, title: string, surf?: SurfSet, rain?: RainCat, skipIntro = false): void {
     this.show();
-    this.last = { type: 'spawn', title, surf, skipIntro };
+    this.last = { type: 'spawn', id, title, surf, rain, skipIntro };
     this.send(this.last);
+  }
+
+  /** A cat rain started (`scene`) or ended (undefined). `skipIntro`: it was already raining. */
+  rain(scene: RainScene | undefined, skipIntro = false): void {
+    if (scene) {
+      this.show();
+      this.rainMsg = { type: 'rain', on: true, scene, skipIntro };
+      this.send(this.rainMsg);
+    } else if (this.rainMsg) {
+      this.rainMsg = undefined;
+      this.send({ type: 'rain', on: false });
+    }
   }
 
   tooSlow(text: string): void {
@@ -407,8 +432,11 @@ export class CatWindow {
         this.claimOwner();
       }
       this.post({ type: 'count', count: this.count });
-      // A fresh window mid-cat (relaunched) shows that cat's loop straight away. If the spawn is
-      // still queued, it's what launched the window: a new cat, which keeps its surf-in intro.
+      // A fresh window mid-rain or mid-cat (relaunched) shows the storm and that cat's loop straight
+      // away. If a message is still queued, it's what launched the window, so it keeps its intro.
+      if (this.rainMsg && !this.queue.includes(this.rainMsg)) {
+        this.post({ ...this.rainMsg, skipIntro: true });
+      }
       if (!this.queue.includes(this.last)) {
         this.post(this.last.type === 'spawn' ? { ...this.last, skipIntro: true } : this.last);
       }
