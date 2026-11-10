@@ -1,0 +1,198 @@
+/* Minigame terminal: a green-phosphor CRT box that pops out of the cat window's bottom-right
+   corner and covers 95% of it. Every piece of text in it is green. */
+
+@font-face {
+  font-family: 'VT323';
+  src: url('fonts/VT323-Regular.woff2') format('woff2');
+  font-weight: 400;
+  font-display: block;
+}
+
+.term {
+  --g: #33ff66;
+  --g-dim: #1f9940;
+  --g-glow: rgba(51, 255, 102, 0.55);
+  --g-wash: rgba(51, 255, 102, 0.12);
+  --tfs: 18px; /* set by terminal.js so the text fits */
+
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  width: 95%;
+  height: 95%;
+  z-index: 20;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border: 2px solid var(--g);
+  background: #020a04;
+  box-shadow: 0 0 0 2px #000, 0 0 12px rgba(51, 255, 102, 0.25);
+  color: var(--g);
+  font-family: 'VT323', Consolas, 'Courier New', monospace;
+  font-size: var(--tfs);
+  line-height: 1.15;
+  text-shadow: 0 0 4px var(--g-glow);
+  -webkit-font-smoothing: antialiased;
+  user-select: text;
+  -webkit-app-region: no-drag;
+  transform-origin: 100% 100%; /* grows out of, and shrinks into, the bottom-right corner */
+}
+.term[hidden] { display: none; }
+
+/* CRT scanlines over everything */
+.term::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: repeating-linear-gradient(to bottom, rgba(0, 0, 0, 0.28) 0 1px, transparent 1px 3px);
+}
+
+.term.opening { animation: term-pop 180ms steps(6, end) both; }
+.term.closing { animation: term-pop 180ms steps(6, end) reverse both; }
+@keyframes term-pop {
+  from { transform: scale(0); }
+  to   { transform: scale(1); }
+}
+
+.term ::selection { background: rgba(51, 255, 102, 0.3); color: var(--g); }
+
+/* ---- title bar (drag handle) ---- */
+.term-bar {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 0.5em;
+  padding: 0.1em 0.4em;
+  border-bottom: 2px solid var(--g);
+  -webkit-app-region: drag;
+}
+.term-title { flex: 1; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.term-timer { flex: none; }
+.term-close {
+  flex: none;
+  visibility: hidden; /* only while the window is hovered, like the panel's X */
+  font: inherit;
+  line-height: 1;
+  padding: 0 0.3em;
+  color: var(--g);
+  background: transparent;
+  border: 2px solid var(--g);
+  text-shadow: inherit;
+  cursor: pointer;
+  -webkit-app-region: no-drag;
+}
+.stage.hovered .term-close,
+.term-close:focus-visible { visibility: visible; }
+.term-close:hover { background: var(--g-wash); }
+.term-close:focus { outline: none; }
+
+/* ---- screen: the typed text ---- */
+.term-screen {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-x: hidden;
+  overflow-y: auto; /* last resort if the text can't fit at the smallest size */
+  padding: 0.3em 0.45em;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere; /* long binary strings and numbers wrap instead of overflowing */
+}
+.term-screen::-webkit-scrollbar { width: 6px; }
+.term-screen::-webkit-scrollbar-thumb { background: var(--g-dim); }
+
+.term-cursor {
+  display: inline-block;
+  width: 0.5em;
+  height: 0.95em;
+  vertical-align: -0.12em;
+  background: var(--g);
+  box-shadow: 0 0 4px var(--g-glow);
+  animation: term-blink 1s steps(1, end) infinite;
+}
+@keyframes term-blink { 50% { opacity: 0; } }
+
+.term-options {
+  display: grid;
+  gap: 0.15em 0.5em;
+  margin-top: 0.4em;
+  white-space: normal;
+  visibility: hidden; /* takes its space while the prompt types, then appears */
+}
+.term-options:empty { display: none; }
+.term-options.shown { visibility: visible; }
+.term-options.grid {
+  grid-template-columns: repeat(auto-fill, minmax(var(--optw, 9ch), 1fr));
+  gap: 0.1em 0.3em;
+}
+.term-options.grid .term-opt { white-space: nowrap; overflow: hidden; padding: 0 0.2em; }
+.term-opt {
+  font: inherit;
+  line-height: inherit;
+  text-align: left;
+  padding: 0 0.3em;
+  color: var(--g);
+  background: transparent;
+  border: 1px solid var(--g-dim);
+  text-shadow: inherit;
+  overflow-wrap: anywhere;
+  cursor: pointer;
+}
+.term-opt:hover,
+.term-opt:focus-visible { border-color: var(--g); background: var(--g-wash); outline: none; }
+
+/* ---- bottom: GO button / answer line / hints ---- */
+.term-bottom {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  gap: 0.2em;
+  padding: 0.25em 0.45em 0.35em;
+  border-top: 2px solid var(--g);
+}
+/* No GO button, no answer line and no hint (result screens): drop the bar entirely. */
+.term-bottom:not(:has(> :not([hidden]):not(:empty))) { display: none; }
+
+.term-go-row { display: flex; align-items: center; gap: 0.5em; }
+.term-go-row[hidden] { display: none; }
+.term-go {
+  flex: none;
+  font: inherit;
+  font-size: 1.15em;
+  line-height: 1.1;
+  padding: 0 0.6em;
+  color: var(--g);
+  background: transparent;
+  border: 2px solid var(--g);
+  text-shadow: inherit;
+  cursor: pointer;
+}
+.term-go:hover,
+.term-go:focus-visible { background: var(--g-wash); box-shadow: 0 0 8px var(--g-glow); outline: none; }
+.term-gobar { flex: 1; min-width: 0; height: 0.5em; border: 1px solid var(--g); }
+.term-gobar i { display: block; height: 100%; background: var(--g); }
+
+.term-prompt { display: flex; align-items: flex-start; gap: 0.35em; }
+.term-prompt[hidden] { display: none; }
+.term-input {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  font: inherit;
+  line-height: inherit;
+  color: var(--g);
+  -webkit-text-fill-color: var(--g);
+  caret-color: var(--g);
+  background: transparent;
+  border: none;
+  outline: none;
+  resize: none;
+  overflow-y: auto;
+  text-shadow: inherit;
+}
+.term-input:disabled { color: var(--g); -webkit-text-fill-color: var(--g-dim); }
+.term-input::placeholder { color: var(--g-dim); -webkit-text-fill-color: var(--g-dim); }
+
+.term-hint { font-size: 0.85em; white-space: pre-wrap; overflow-wrap: anywhere; }
+.term-hint:empty { display: none; }

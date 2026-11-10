@@ -1,0 +1,16 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      // F5: compile, copy the build into the installed extension, and make Cat Yoink in the open
+      // VS Code window(s) reload itself. No new window opens; other extensions keep running.
+      "name": "Cat Yoink: build + reload here",
+      "type": "node",
+      "request": "launch",
+      "program": "${workspaceFolder}/scripts/sync-install.js",
+      "preLaunchTask": "npm: compile",
+      "console": "internalConsole",
+      "skipFiles": ["<node_internals>/**"]
+    }
+  ]
+}

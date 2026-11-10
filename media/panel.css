@@ -1,0 +1,220 @@
+/* Pixel-art look to match the Surfing Nyan Cat GIF: an 8px bitmap font at whole multiples of 8,
+   hard 1-2px outlines with no blur, square corners and bevels, and no smooth transitions. */
+
+@font-face {
+  font-family: 'Press Start 2P';
+  src: url('fonts/PressStart2P-Regular.woff2') format('woff2');
+  font-weight: 400;
+  font-display: block;
+}
+
+:root {
+  --ink: #000;
+  --pink: #ff5fb0;     /* pop-tart frosting */
+  --pink-hi: #ffa6d6;
+  --pink-lo: #c2307e;
+  --pink-hover: #ff7fc0;
+  --yellow: #ffe14d;   /* the sun */
+  --red: #e8414f;
+  --red-hi: #ff8a94;
+  --red-lo: #9e1f2b;
+  --red-hover: #ff5a67;
+  --text: 8px;
+  --big: 16px;
+  /* Pixel outline around text: 1px for 8px text, 2px for 16px text. */
+  --outline-1: 1px 0 0 var(--ink), -1px 0 0 var(--ink), 0 1px 0 var(--ink), 0 -1px 0 var(--ink),
+    1px 1px 0 var(--ink);
+  --outline-2: 2px 0 0 var(--ink), -2px 0 0 var(--ink), 0 2px 0 var(--ink), 0 -2px 0 var(--ink),
+    2px 2px 0 var(--ink);
+  --outline: var(--outline-1);
+}
+
+html, body {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+  background: #000;
+  color: #fff;
+  font-family: 'Press Start 2P', monospace;
+  font-size: var(--text);
+  font-weight: 400;
+  line-height: 1.75;
+  -webkit-font-smoothing: none;
+  overflow: hidden;
+  user-select: none;
+}
+
+.stage {
+  position: fixed;
+  inset: 0;
+  overflow: hidden;
+  background: #000;
+}
+
+/* ---- images ---- */
+.scene {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  image-rendering: pixelated;
+}
+
+/* ---- window dragging (Electron): drag anywhere except the outer 6px, which resizes ---- */
+.drag {
+  position: absolute;
+  inset: 6px;
+  z-index: 4;
+  -webkit-app-region: drag;
+}
+
+/* ---- overlays: text sits straight on the picture, readable thanks to its pixel outline ---- */
+.top,
+.bottom {
+  position: absolute;
+  left: 0;
+  right: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 8px;
+  z-index: 5;
+  text-shadow: var(--outline);
+  pointer-events: none; /* let drags through to .drag */
+}
+
+.top {
+  top: 0;
+  flex-direction: row;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 8px;
+  padding: 8px 36px; /* keep clear of the close button */
+}
+
+.top strong { font-weight: 400; color: var(--yellow); }
+
+.bottom {
+  bottom: 0;
+  gap: 8px;
+}
+
+.loading {
+  /* "Loading cat..." is 14 glyphs, 1em wide each: shrink with the window so it stays on one line. */
+  font-size: min(var(--big), calc((100vw - 16px) / 14.5));
+  white-space: nowrap;
+  text-shadow: var(--outline-2);
+}
+
+/* Dots appear one after another, then reset. */
+.dots i {
+  font-style: normal;
+  opacity: 0;
+  animation: dot-cycle 1.8s steps(1, end) infinite;
+}
+.dots i:nth-child(1) { animation-delay: 0s; }
+.dots i:nth-child(2) { animation-delay: 0.3s; }
+.dots i:nth-child(3) { animation-delay: 0.6s; }
+
+/* Each dot switches on in turn, then off in turn (same order), like a rolling wave. */
+@keyframes dot-cycle {
+  0%   { opacity: 0; }
+  1%   { opacity: 1; }
+  50%  { opacity: 1; }
+  51%  { opacity: 0; }
+  100% { opacity: 0; }
+}
+
+.caption,
+.status {
+  max-width: 92%;
+  text-align: center;
+}
+.status { min-height: 1.75em; color: var(--yellow); }
+
+/* Larger windows: double the text (still a whole multiple of the font's 8px grid). */
+@media (min-width: 400px) {
+  :root { --text: 16px; --big: 24px; --outline: var(--outline-2); }
+}
+
+/* ---- YOINK! button: small, square, bevelled, with a notched pixel outline ---- */
+.yoink {
+  --edge: 0 -2px 0 var(--ink), 0 2px 0 var(--ink), -2px 0 0 var(--ink), 2px 0 0 var(--ink);
+  font-family: inherit;
+  font-size: 8px;
+  line-height: 8px;
+  padding: 6px 10px;
+  margin: 2px;
+  border: 0;
+  border-radius: 0;
+  color: #fff;
+  background: var(--pink);
+  text-shadow: 1px 1px 0 var(--ink);
+  box-shadow: inset -2px -2px 0 var(--pink-lo), inset 2px 2px 0 var(--pink-hi), var(--edge);
+  cursor: pointer;
+  transition: none;
+  pointer-events: auto;
+  -webkit-app-region: no-drag;
+}
+.yoink:hover { background: var(--pink-hover); }
+.yoink:active {
+  transform: translateY(2px);
+  box-shadow: inset 2px 2px 0 var(--pink-lo), inset -2px -2px 0 var(--pink-hi), var(--edge);
+}
+.yoink:focus { outline: none; }
+.yoink:focus-visible { outline: 2px solid var(--yellow); outline-offset: 4px; }
+.yoink:disabled {
+  color: #d0d0d0;
+  background: #8a8a8a;
+  box-shadow: inset -2px -2px 0 #5a5a5a, inset 2px 2px 0 #b5b5b5, var(--edge);
+  cursor: not-allowed;
+  transform: none;
+}
+
+/* ---- X: closes (hides) the window; same pixel style as YOINK!, in red ---- */
+.close {
+  --edge: 0 -2px 0 var(--ink), 0 2px 0 var(--ink), -2px 0 0 var(--ink), 2px 0 0 var(--ink);
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  z-index: 10;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  font-family: inherit;
+  font-size: 8px;
+  line-height: 8px;
+  color: #fff;
+  background: var(--red);
+  text-shadow: 1px 1px 0 var(--ink);
+  box-shadow: inset -2px -2px 0 var(--red-lo), inset 2px 2px 0 var(--red-hi), var(--edge);
+  cursor: pointer;
+  -webkit-app-region: no-drag;
+  visibility: hidden; /* shown only while the cursor is over the window (see window/main.js) */
+}
+.stage.hovered .close,
+.close:focus-visible { visibility: visible; }
+.close:hover { background: var(--red-hover); }
+.close:active {
+  transform: translateY(2px);
+  box-shadow: inset 2px 2px 0 var(--red-lo), inset -2px -2px 0 var(--red-hi), var(--edge);
+}
+.close:focus { outline: none; }
+.close:focus-visible { outline: 2px solid var(--yellow); outline-offset: 2px; }
+
+/* A cat showing up while the minigame terminal is open: keep YOINK! reachable above it. */
+.stage[data-state="spawn"] .bottom { z-index: 30; }
+
+/* ---- states: the scene is always shown; the state only picks which overlays are visible ---- */
+.stage [data-only] { display: none; }
+
+.stage[data-state="idle"] .loading { display: block; }
+.stage:not([data-state="idle"]) .loading { display: none; }
+.stage[data-state="idle"] .caption,
+.stage[data-state="idle"] .yoink { display: none; }
+
+.stage[data-state="result"] .yoink,
+.stage[data-state="result"] .caption { display: none; }

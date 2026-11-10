@@ -1,0 +1,1 @@
+Revised surfboards: chunky pixel art matched to the original Nyan Cat animation. Large square pixels, bold black outlines, flat colors and simplified motifs. Board atlas restyled with the built-in image generator, then exported on a 35 by 7 pixel grid and enlarged with nearest-neighbor sampling. Animation timing and matching endpoint frames preserved.

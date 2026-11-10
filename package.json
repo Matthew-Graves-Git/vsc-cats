@@ -1,0 +1,129 @@
+{
+  "name": "cat-yoink",
+  "displayName": "Cat Yoink",
+  "description": "Watches a Discord channel for Cat Bot spawns and lets you yoink them from VS Code.",
+  "version": "0.2.0",
+  "publisher": "local",
+  "license": "MIT",
+  "icon": "media/icon.png",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "activationEvents": [
+    "onStartupFinished",
+    "onWebviewPanel:catYoink"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "catYoink.setChannel",
+        "title": "Cat Yoink: Set Discord Channel"
+      },
+      {
+        "command": "catYoink.start",
+        "title": "Cat Yoink: Start Watching"
+      },
+      {
+        "command": "catYoink.stop",
+        "title": "Cat Yoink: Stop Watching"
+      },
+      {
+        "command": "catYoink.login",
+        "title": "Cat Yoink: Log In To Discord"
+      },
+      {
+        "command": "catYoink.showPanel",
+        "title": "Cat Yoink: Show Panel"
+      },
+      {
+        "command": "catYoink.resetCount",
+        "title": "Cat Yoink: Reset Catch Count"
+      },
+      {
+        "command": "catYoink.testTerminal",
+        "title": "Cat Yoink: Test Minigame Terminal"
+      },
+      {
+        "command": "catYoink.menu",
+        "title": "Cat Yoink: Menu"
+      }
+    ],
+    "configuration": {
+      "title": "Cat Yoink",
+      "properties": {
+        "catYoink.channelUrl": {
+          "type": "string",
+          "default": "",
+          "description": "Discord channel link, e.g. https://discord.com/channels/<server>/<channel>"
+        },
+        "catYoink.browserPath": {
+          "type": "string",
+          "default": "",
+          "description": "Path to Edge or Chrome. Leave empty to auto-detect."
+        },
+        "catYoink.botName": {
+          "type": "string",
+          "default": "Cat Bot",
+          "description": "Display name of the bot that posts cats."
+        },
+        "catYoink.triggerText": {
+          "type": "string",
+          "default": "appeared!",
+          "description": "Case-insensitive regular expression matched against the bot message that means a cat appeared."
+        },
+        "catYoink.caughtText": {
+          "type": "string",
+          "default": "\\bc[a-z]*ught",
+          "description": "Case-insensitive regular expression matched against the bot message that means somebody caught the cat. The default covers Cat Bot's spellings (caught, cought, coought...)."
+        },
+        "catYoink.replyText": {
+          "type": "string",
+          "default": "cat",
+          "description": "Message sent to the channel when you press Yoink."
+        },
+        "catYoink.autoStart": {
+          "type": "boolean",
+          "default": true,
+          "description": "Open Cat Yoink and start watching every time VS Code starts (needs a channel link)."
+        },
+        "catYoink.alwaysOnTop": {
+          "type": "boolean",
+          "default": true,
+          "description": "Keep the Cat Yoink window above other windows."
+        }
+      }
+    },
+    "icons": {
+      "cat-yoink-cat": {
+        "description": "Cat Yoink",
+        "default": {
+          "fontPath": "./media/cat-icons.woff",
+          "fontCharacter": "\f101"
+        }
+      }
+    }
+  },
+  "scripts": {
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "icons": "node scripts/build-icons.js",
+    "sync-install": "node scripts/sync-install.js",
+    "vscode:prepublish": "npm run compile",
+    "package": "vsce package"
+  },
+  "dependencies": {
+    "electron": "39.8.10",
+    "puppeteer-core": "^23.11.1"
+  },
+  "devDependencies": {
+    "@types/node": "^20.10.0",
+    "@types/vscode": "^1.85.0",
+    "@vscode/vsce": "^2.19.0",
+    "fantasticon": "^3.0.0",
+    "typescript": "^5.6.3"
+  }
+}

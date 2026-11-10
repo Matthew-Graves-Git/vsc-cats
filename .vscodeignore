@@ -1,0 +1,16 @@
+.vscode/**
+src/**
+tsconfig.json
+media/icon-src/**
+media/gifs/index.html
+media/gifs/preview.png
+media/gifs/README.txt
+media/gifs/design_notes.txt
+scripts/**
+**/*.map
+.gitignore
+claude.md
+*.vsix
+# Electron: keep only the English locale (saves ~40 MB)
+node_modules/electron/dist/locales/**
+!node_modules/electron/dist/locales/en-US.pak
