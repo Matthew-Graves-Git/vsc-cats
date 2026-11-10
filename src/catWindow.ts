@@ -51,7 +51,7 @@ export type TerminalMessage =
 export type PanelMessage =
   | { type: 'idle' }
   /** `skipIntro`: the cat was already there, so show its surf loop right away (no Nyan → surf-in). */
-  | { type: 'spawn'; caption: string; surf?: SurfSet; skipIntro?: boolean }
+  | { type: 'spawn'; title: string; surf?: SurfSet; skipIntro?: boolean }
   | { type: 'tooSlow'; text: string }
   | { type: 'status'; text: string }
   | { type: 'result'; text: string; caught: boolean }
@@ -117,9 +117,9 @@ export class CatWindow {
   }
 
   /** A cat appeared. `surf` animates it in; without one, Nyan keeps looping under the overlay. */
-  spawn(caption: string, surf?: SurfSet, skipIntro = false): void {
+  spawn(title: string, surf?: SurfSet, skipIntro = false): void {
     this.show();
-    this.last = { type: 'spawn', caption, surf, skipIntro };
+    this.last = { type: 'spawn', title, surf, skipIntro };
     this.send(this.last);
   }
 

@@ -4,7 +4,7 @@ import * as path from 'path';
 import { BrowserStatus, DiscordBrowser, DiscordEvent, MinigameForm } from './discordBrowser';
 import { CatWindow, TerminalMessage } from './catWindow';
 import { surfSet } from './gifs';
-import { parseCatch, parseLateCatchers, sameName, spawnCaption, spawnType, spawnWord } from './catText';
+import { parseCatch, parseLateCatchers, sameName, spawnCaption, spawnTitle, spawnType, spawnWord } from './catText';
 import { OwnerLock } from './lock';
 
 const CHANNEL_RE = /^https:\/\/(?:\w+\.)?discord(?:app)?\.com\/channels\/(\d+|@me)\/\d+\/?$/;
@@ -299,8 +299,9 @@ async function onSpawn(e: Extract<DiscordEvent, { kind: 'spawn' }>) {
   clearTimers();
   const trigger = cfg().get<string>('triggerText', 'appeared!');
   const caption = spawnCaption(e.text, trigger);
-  active = { id: e.id, yoinked: false, resolved: false, type: spawnType(caption, trigger) };
-  panel.spawn(caption, surfSet(ctx.extensionPath, spawnWord(caption, trigger)), !!e.existing);
+  const type = spawnType(caption, trigger);
+  active = { id: e.id, yoinked: false, resolved: false, type };
+  panel.spawn(spawnTitle(type), surfSet(ctx.extensionPath, spawnWord(caption, trigger)), !!e.existing);
 }
 
 function countCatch(type: string) {
@@ -334,7 +335,7 @@ function onCaught(text: string, firstAuthor: string | undefined) {
   if (mine) {
     active.resolved = true;
     countCatch(type);
-    panel.result(`Yoinked! ${type} caught!`, true);
+    panel.result(`${type} Yoinked!`, true);
     scheduleIdle();
     return;
   }

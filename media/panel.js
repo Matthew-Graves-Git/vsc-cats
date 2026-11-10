@@ -4,7 +4,7 @@
   const stage = document.getElementById('stage');
   const close = document.getElementById('close');
   const scene = document.getElementById('scene');
-  const caption = document.getElementById('caption');
+  const appeared = document.getElementById('appeared');
   const status = document.getElementById('status');
   const yoink = document.getElementById('yoink');
   const countEl = document.getElementById('count');
@@ -127,11 +127,13 @@
         busy = false;
         status.textContent = '';
         setState('idle');
+        stage.classList.remove('has-cat'); // back to "Yoinked N Cats"
         setTarget(null);
         break;
       case 'spawn':
         busy = false;
-        caption.textContent = m.caption || '';
+        appeared.textContent = m.title || '';
+        stage.classList.add('has-cat'); // the title replaces the counter until idle
         status.textContent = '';
         yoink.disabled = false;
         setState('spawn');
@@ -140,7 +142,7 @@
           target = showing = m.surf;
           play(m.surf.loop, 'loop');
         } else {
-          // A cat type without GIFs has no surf set: Nyan keeps looping under the caption.
+          // A cat type without GIFs has no surf set: Nyan keeps looping under the overlay.
           setTarget(m.surf);
         }
         break;

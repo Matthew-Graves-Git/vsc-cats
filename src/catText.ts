@@ -27,6 +27,12 @@ export function spawnType(text: string, trigger: string): string | undefined {
   return /\bcat$/i.test(type) && type.length <= 40 ? type : undefined;
 }
 
+/** "Fine cat" -> "Fine Cat Appeared!"; no type -> "Cat Appeared!" */
+export function spawnTitle(type: string | undefined): string {
+  const name = (type ?? '').replace(/\s*\bcat$/i, '').trim();
+  return name ? `${name} Cat Appeared!` : 'Cat Appeared!';
+}
+
 /**
  * The word right before "cat" in the spawn text, lowercased, for picking the GIF.
  * "Fine cat has appeared!" -> "fine", "A wild eGirl cat has appeared!" -> "egirl".

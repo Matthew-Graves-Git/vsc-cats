@@ -95,6 +95,11 @@ html, body {
 
 .top strong { font-weight: 400; color: var(--yellow); }
 
+/* While a cat is out, "<Type> Cat Appeared!" replaces the counter (back on idle). */
+.top .appeared { display: none; text-align: center; }
+.stage.has-cat .top .appeared { display: inline; }
+.stage.has-cat .top .counter { display: none; }
+
 .bottom {
   bottom: 0;
   gap: 8px;
@@ -126,7 +131,6 @@ html, body {
   100% { opacity: 0; }
 }
 
-.caption,
 .status {
   max-width: 92%;
   text-align: center;
@@ -213,8 +217,6 @@ html, body {
 
 .stage[data-state="idle"] .loading { display: block; }
 .stage:not([data-state="idle"]) .loading { display: none; }
-.stage[data-state="idle"] .caption,
 .stage[data-state="idle"] .yoink { display: none; }
 
-.stage[data-state="result"] .yoink,
-.stage[data-state="result"] .caption { display: none; }
+.stage[data-state="result"] .yoink { display: none; }

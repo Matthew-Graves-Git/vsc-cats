@@ -2,7 +2,7 @@
 
 Watches a Discord channel for **Cat Bot** spawns ("… appeared!") and shows the cat in a small always-on-top window with a pixel-art **YOINK!** button. When a cat appears, the Nyan Cat GIF finishes its current loop, the matching surf GIF plays once, and then that cat's surf loop repeats. Pressing YOINK types `cat` in the channel for you and, after the current loop finishes, the return GIF plays once and Nyan Cat is back. If someone else catches the cat or it gets away, the same return plays. The GIF is picked by the word right before "cat" in the spawn message ("Fine cat has appeared!" → `fine_01_surf.gif`); cat types without GIFs (e.g. Baby cat) keep Nyan on screen with just the caption and button. The window then says which cat was caught (e.g. "Yoinked! Fine cat caught!"). If a cat is already waiting when Cat Yoink starts (or the window is reopened mid-cat), its surf loop shows right away instead of the surf-in.
 
-While no cat is around the window plays a looping Nyan Cat GIF with an animated "Loading cat..." and a "Yoinked N Cats" counter.
+While no cat is around the window plays a looping Nyan Cat GIF with an animated "Loading cat..." and a "Yoinked N Cats" counter. While a cat is out, the counter is replaced by "<Type> Cat Appeared!".
 
 ## The Cat Yoink window
 
