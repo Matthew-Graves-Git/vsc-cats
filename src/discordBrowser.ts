@@ -708,6 +708,8 @@ export function observerScript(cfg: {
       return (text) => text.toLowerCase().includes(lower);
     }
   };
+  /** On attach, a cat counts as already out only if its spawn is among the newest this many messages. */
+  const RECENT_MESSAGES = 5;
   const isTrigger = toMatcher(cfg.trigger);
   const isCaught = toMatcher(cfg.caught);
   const isRainStart = toMatcher(cfg.rainStart);
@@ -902,10 +904,23 @@ export function observerScript(cfg: {
     if (!list) {
       return false;
     }
-    // Cat Bot deletes a spawn once its catch window ends, so a spawn already on screen is still
-    // catchable. Surface the newest one we haven't reported; everything else is history.
+    // Is a cat already out? Walk the newest RECENT_MESSAGES messages back: a spawn we haven't
+    // reported is still catchable (Cat Bot deletes a spawn once its catch window ends); a catch
+    // message first means the last cat is gone. Everything else is history.
     const items = Array.from(list.querySelectorAll('li[id^="chat-messages-"]'));
-    const pending = items.filter((li) => !seen.has(li.id + ':spawn') && isSpawn(li)).pop();
+    let pending: Element | undefined;
+    for (const li of items.slice(-RECENT_MESSAGES).reverse()) {
+      if (isSpawn(li)) {
+        if (!seen.has(li.id + ':spawn')) {
+          pending = li;
+        }
+        break;
+      }
+      const text = textOf(li);
+      if (authorOf(li).toLowerCase() === botLower && isCaught(text) && !isLate(text) && !isBonus(text)) {
+        break;
+      }
+    }
     // Is it raining? The newest rain message on screen says (it's also how a missed start or end
     // is caught up on after Discord re-renders the list). Core ignores a state it is already in.
     let rainNow: 'start' | 'end' | null = null;
@@ -963,6 +978,32 @@ export function observerScript(cfg: {
     return true;
   };
 
+  /**
+   * Resolves once Discord has rendered the recent history into `list`: it appears before its
+   * messages do, and attach() must see the last RECENT_MESSAGES of them.
+   */
+  const settled = (list: Element): Promise<void> =>
+    new Promise((resolve) => {
+      const start = Date.now();
+      let last = -1;
+      let since = start;
+      const tick = () => {
+        const n = list.querySelectorAll('li[id^="chat-messages-"]').length;
+        const now = Date.now();
+        if (n !== last) {
+          last = n;
+          since = now;
+        }
+        const quiet = now - since;
+        if ((n >= RECENT_MESSAGES && quiet >= 500) || (n > 0 && quiet >= 1500) || now - start >= 6000) {
+          resolve();
+        } else {
+          setTimeout(tick, 250);
+        }
+      };
+      tick();
+    });
+
   // Re-attach if Discord re-renders the list (channel switch, reconnect).
   let current: Element | null = null;
   setInterval(() => {
@@ -972,7 +1013,11 @@ export function observerScript(cfg: {
       if (w.__catYoinkObserver) {
         w.__catYoinkObserver.disconnect();
       }
-      attach();
+      void settled(list).then(() => {
+        if (current === list) {
+          attach();
+        }
+      });
     }
   }, 1000);
 }

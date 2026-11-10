@@ -187,8 +187,11 @@ function layout() {
 
 // ---- visibility ----
 
+/** The page has its first GIF on screen; until then the window stays hidden (no empty black box). */
+let sceneReady = false;
+
 function canShow() {
-  return mode === 'floating' || (!!owner && !!owner.rect && !owner.minimized);
+  return sceneReady && (mode === 'floating' || (!!owner && !!owner.rect && !owner.minimized));
 }
 
 /** Shows or hides the window to match wantVisible and (inside mode) the VS Code window. */
@@ -517,6 +520,14 @@ ipcMain.on('panel', (_e, m) => {
     startDrag();
   } else if (m.type === 'dragEnd') {
     endDrag();
+  } else if (m.type === 'sceneReady') {
+    if (!sceneReady) {
+      sceneReady = true;
+      updateVisibility();
+      if (mode === 'floating' && win.isVisible()) {
+        win.moveTop();
+      }
+    }
   } else if (m.type === 'ready' || m.type === 'yoink' || m.type === 'mgGo' || m.type === 'mgClose') {
     send({ type: m.type });
   } else if (m.type === 'mgAnswer') {

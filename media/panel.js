@@ -125,11 +125,23 @@
     show(preload(src), nextPhase, apply);
   }
 
+  // The window stays hidden (window/main.js) until the first GIF is on the <img>; an error counts
+  // too, so a missing file can't keep it hidden forever.
+  let sceneShown = false;
+  const firstScene = () => {
+    if (!sceneShown) {
+      sceneShown = true;
+      host.send({ type: 'sceneReady' });
+    }
+  };
+  scene.addEventListener('error', firstScene);
+
   scene.addEventListener('load', () => {
     if (phaseStart === null) {
       phaseStart = performance.now();
     }
     plan();
+    firstScene();
   });
 
   /**
