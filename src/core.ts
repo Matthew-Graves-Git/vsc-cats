@@ -2,7 +2,7 @@
 import * as vscode from 'vscode';
 import * as path from 'path';
 import { BrowserStatus, DiscordBrowser, DiscordEvent, MinigameForm } from './discordBrowser';
-import { CatWindow, TerminalMessage } from './catWindow';
+import { CatWindow, TerminalMessage, windowModeSetting } from './catWindow';
 import { surfSet } from './gifs';
 import { parseCatch, parseLateCatchers, sameName, spawnCaption, spawnTitle, spawnType, spawnWord } from './catText';
 import { OwnerLock } from './lock';
@@ -86,6 +86,18 @@ export function activate(context: vscode.ExtensionContext) {
     panel.setCount(0);
   });
   reg('catYoink.testTerminal', testTerminal);
+  reg('catYoink.attachWindow', () => {
+    if (!browser && lock.isHeldByOther()) {
+      void vscode.window.showInformationMessage('Cat Yoink is running in another VS Code window.');
+      return;
+    }
+    if (windowModeSetting() === 'floating') {
+      void vscode.window.showInformationMessage('Cat Yoink: "catYoink.windowMode" is "floating", so the window is not attached to VS Code.');
+      return;
+    }
+    panel.show();
+    panel.claimOwner(true); // the command palette just focused this window, so it is in front
+  });
   reg('catYoink.menu', menu);
 
   context.subscriptions.push(
@@ -94,8 +106,14 @@ export function activate(context: vscode.ExtensionContext) {
       if (e.affectsConfiguration('catYoink.channelUrl') && browser) {
         void startWatching();
       }
-      if (e.affectsConfiguration('catYoink.alwaysOnTop')) {
-        panel.setAlwaysOnTop(cfg().get<boolean>('alwaysOnTop', true));
+      if (e.affectsConfiguration('catYoink.windowMode')) {
+        void panel.setMode(windowModeSetting());
+      }
+    }),
+    // The cat window attaches to the VS Code window that is in front when this one gets focus.
+    vscode.window.onDidChangeWindowState((s) => {
+      if (s.focused) {
+        panel.claimOwner();
       }
     })
   );
@@ -138,6 +156,7 @@ async function menu() {
       running ? { label: 'Stop watching', id: 'catYoink.stop' } : { label: 'Start watching', id: 'catYoink.start' },
       { label: 'Log in to Discord (show browser)', id: 'catYoink.login' },
       { label: 'Show panel', id: 'catYoink.showPanel' },
+      { label: 'Attach window here', id: 'catYoink.attachWindow' },
       { label: 'Set channel link', id: 'catYoink.setChannel' },
     ],
     { title: 'Cat Yoink' }

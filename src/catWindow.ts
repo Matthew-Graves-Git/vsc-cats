@@ -58,10 +58,21 @@ export type PanelMessage =
   | { type: 'count'; count: number }
   | { type: 'term'; msg: TerminalMessage };
 
+/** `catYoink.windowMode`: inside the watching VS Code window (Windows only), or free-floating. */
+export type WindowMode = 'insideVSCode' | 'floating';
+
+export function windowModeSetting(): WindowMode {
+  return vscode.workspace.getConfiguration('catYoink').get<string>('windowMode') === 'floating'
+    ? 'floating'
+    : 'insideVSCode';
+}
+
 /**
- * The Cat Yoink window: a frameless, always-on-top Electron window (window/main.js) that shows
- * the Nyan / surfing-cat GIFs and the Yoink button. It remembers its own position and size.
- * We talk to it over a named pipe with JSON lines.
+ * The Cat Yoink window: a frameless Electron window (window/main.js) that shows the Nyan /
+ * surfing-cat GIFs and the Yoink button. By default it lives inside this VS Code window (it
+ * follows it, stays stacked just above it and hides while it is minimized); in floating mode it
+ * is a free always-on-top window. It remembers its own position and size. We talk to it over a
+ * named pipe with JSON lines.
  */
 export class CatWindow {
   private proc?: cp.ChildProcess;
@@ -72,7 +83,9 @@ export class CatWindow {
   private queue: PanelMessage[] = [];
   private last: PanelMessage = { type: 'idle' };
   private count = 0;
-  private onTop = vscode.workspace.getConfiguration('catYoink').get<boolean>('alwaysOnTop', true);
+  private mode: WindowMode = windowModeSetting();
+  /** We asked for the window to be shown and the user hasn't closed it since. */
+  private wanted = false;
   private errorShown = false;
   /** True while stale windows are being cleaned up, before the new window is spawned. */
   private launching = false;
@@ -87,6 +100,7 @@ export class CatWindow {
 
   /** Shows the window (starting it if needed) without taking focus. */
   show(): void {
+    this.wanted = true;
     if (!this.proc && !this.launching && !this.launch()) {
       return;
     }
@@ -94,15 +108,36 @@ export class CatWindow {
   }
 
   hide(): void {
+    this.wanted = false;
     if (this.proc || this.launching) {
       this.cmd({ cmd: 'hide' });
     }
   }
 
-  setAlwaysOnTop(onTop: boolean): void {
-    this.onTop = onTop;
-    if (this.proc) {
-      this.cmd({ cmd: 'config', alwaysOnTop: onTop });
+  /** Switches between inside-VS Code and floating by restarting the window. */
+  async setMode(mode: WindowMode): Promise<void> {
+    if (mode === this.mode) {
+      return;
+    }
+    this.mode = mode;
+    if (!this.proc && !this.launching) {
+      return; // the next launch uses the new mode
+    }
+    const reopen = this.wanted;
+    await this.dispose();
+    if (reopen) {
+      this.show();
+    }
+  }
+
+  /**
+   * Tells the window that this VS Code window is in front, so it can attach to it. Call it when
+   * this VS Code window gets focus. Not buffered: by the time a starting window connected, the
+   * foreground window may be a different one. `force` re-attaches even if already attached.
+   */
+  claimOwner(force = false): void {
+    if (this.mode === 'insideVSCode' && this.sock && !this.sock.destroyed) {
+      this.sock.write(JSON.stringify({ cmd: force ? 'reclaim' : 'claim' }) + '\n');
     }
   }
 
@@ -272,7 +307,12 @@ export class CatWindow {
       CAT_YOINK_PIPE: pipe,
       CAT_YOINK_STATE: path.join(this.storageDir, 'window.json'),
       CAT_YOINK_USER_DATA: path.join(this.storageDir, 'window-profile'),
-      CAT_YOINK_ON_TOP: this.onTop ? '1' : '0',
+      CAT_YOINK_MODE: this.mode === 'floating' ? 'floating' : 'inside',
+      // How window/tracker.cs recognizes this VS Code's windows: they belong to VS Code's main
+      // process, which is the extension host's parent (or, failing that, to the same exe).
+      CAT_YOINK_CODE_PID: String(process.ppid),
+      CAT_YOINK_CODE_EXE: process.execPath,
+      CAT_YOINK_OWNER_HINT: this.ownerHint(),
     };
     delete env.ELECTRON_RUN_AS_NODE;
 
@@ -330,9 +370,42 @@ export class CatWindow {
     this.launching = false;
   }
 
-  private onMessage(m: { type: string }): void {
+  private get ownerFile(): string {
+    return path.join(this.storageDir, 'window-owner.json');
+  }
+
+  /**
+   * The VS Code window handle the previous cat window attached to, if that was in this extension
+   * host (a hot reload respawns the cat window, but the VS Code window and its PID stay).
+   */
+  private ownerHint(): string {
+    try {
+      const o = JSON.parse(fs.readFileSync(this.ownerFile, 'utf8'));
+      return o.pid === process.pid && Number.isInteger(o.hwnd) ? String(o.hwnd) : '';
+    } catch {
+      return '';
+    }
+  }
+
+  private onMessage(m: { type: string; hwnd?: number }): void {
+    if (m.type === 'owner') {
+      try {
+        fs.mkdirSync(this.storageDir, { recursive: true });
+        fs.writeFileSync(this.ownerFile, JSON.stringify({ pid: process.pid, hwnd: m.hwnd }));
+      } catch {
+        // only used to reattach faster after a hot reload
+      }
+      return;
+    }
+    if (m.type === 'closed') {
+      this.wanted = false; // the user closed it; the next cat reopens it
+      return;
+    }
     if (m.type === 'ready') {
       this.ready = true;
+      if (vscode.window.state.focused) {
+        this.claimOwner();
+      }
       this.post({ type: 'count', count: this.count });
       // A fresh window mid-cat (relaunched) shows that cat's loop straight away. If the spawn is
       // still queued, it's what launched the window: a new cat, which keeps its surf-in intro.

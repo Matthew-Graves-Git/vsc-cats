@@ -7,7 +7,14 @@ While no cat is around the window plays a looping Nyan Cat GIF with an animated 
 ## The Cat Yoink window
 
 - A frameless window (its own small Electron app, no title bar) that opens every time VS Code starts while `catYoink.autoStart` is on.
-- Drag anywhere on the picture to move it; drag its edges to resize it. Its position and size are saved and reused every time it opens. The first time it opens in the bottom-right corner of your main screen.
+- It lives inside the VS Code window that is watching (`catYoink.windowMode` = `insideVSCode`, the default; Windows only):
+  - It can't be dragged or resized past that window's edges. It keeps its distance from the nearest corner when VS Code moves or resizes. The first time, it opens 24px in from VS Code's bottom-right corner.
+  - If VS Code gets smaller than the cat window, the cat window shrinks with it (down to 200×200) and grows back to its own size afterwards.
+  - It stays stacked just above VS Code, so other apps in front of VS Code cover it too. It hides while VS Code is minimized, including when a cat appears, and comes back when VS Code is restored.
+  - It stays hidden until Cat Yoink knows which VS Code window is watching. That's immediate when only one VS Code window is open; otherwise it's the first time the watching window gets focus.
+  - It sticks to that window, even when you focus other VS Code windows or floating editor windows. If it ever picks the wrong one, run **Cat Yoink: Attach Window Here** in the right window.
+- With `catYoink.windowMode` = `floating`, it is a free always-on-top window that remembers its own screen position instead. The first time, it opens in the bottom-right corner of your main screen.
+- Drag anywhere on the picture to move it; drag its edges to resize it. Its position and size are saved and reused every time it opens.
 - The **X** in the corner (shown only while the cursor is over the window) hides it. Watching continues, and the window pops back up when the next cat appears (or run **Cat Yoink: Show Panel**).
 - It never takes focus when it appears, so it doesn't interrupt typing.
 
@@ -30,7 +37,7 @@ Uses your installed Edge or Chrome (auto-detected, or set `catYoink.browserPath`
 
 ## Commands
 
-`Cat Yoink: Set Discord Channel`, `Start Watching`, `Stop Watching`, `Log In To Discord`, `Show Panel`, `Reset Catch Count`, `Test Minigame Terminal`, `Menu` (also the status bar item).
+`Cat Yoink: Set Discord Channel`, `Start Watching`, `Stop Watching`, `Log In To Discord`, `Show Panel`, `Attach Window Here`, `Reset Catch Count`, `Test Minigame Terminal`, `Menu` (also the status bar item).
 
 ## Settings
 
@@ -43,7 +50,7 @@ Uses your installed Edge or Chrome (auto-detected, or set `catYoink.browserPath`
 | `catYoink.replyText` | `cat` | What Yoink sends |
 | `catYoink.browserPath` | auto | Edge/Chrome executable |
 | `catYoink.autoStart` | `true` | Open the window and start watching every time VS Code starts |
-| `catYoink.alwaysOnTop` | `true` | Keep the window above other windows |
+| `catYoink.windowMode` | `insideVSCode` | `insideVSCode`: kept inside the watching VS Code window (Windows only). `floating`: free and always on top |
 
 ## How the catch counter works
 

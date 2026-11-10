@@ -61,12 +61,13 @@ html, body {
   image-rendering: pixelated;
 }
 
-/* ---- window dragging (Electron): drag anywhere except the outer 6px, which resizes ---- */
+/* ---- window dragging: press anywhere except the outer 6px (which resizes) and drag. panel.js
+   and window/main.js move the window themselves; a -webkit-app-region drag would use Windows' move
+   loop, whose Aero Shake minimizes VS Code when the cat is held against VS Code's edge. ---- */
 .drag {
   position: absolute;
   inset: 6px;
   z-index: 4;
-  -webkit-app-region: drag;
 }
 
 /* ---- overlays: text sits straight on the picture, readable thanks to its pixel outline ---- */
@@ -159,7 +160,6 @@ html, body {
   cursor: pointer;
   transition: none;
   pointer-events: auto;
-  -webkit-app-region: no-drag;
 }
 .yoink:hover { background: var(--pink-hover); }
 .yoink:active {
@@ -196,7 +196,6 @@ html, body {
   text-shadow: 1px 1px 0 var(--ink);
   box-shadow: inset -2px -2px 0 var(--red-lo), inset 2px 2px 0 var(--red-hi), var(--edge);
   cursor: pointer;
-  -webkit-app-region: no-drag;
   visibility: hidden; /* shown only while the cursor is over the window (see window/main.js) */
 }
 .stage.hovered .close,

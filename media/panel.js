@@ -116,6 +116,40 @@
 
   close.addEventListener('click', () => host.send({ type: 'close' }));
 
+  // ---- window dragging ----
+  //
+  // Pressing the picture (or the terminal's title bar) moves the window: window/main.js follows the
+  // cursor until we say the drag ended. Not a -webkit-app-region drag: that uses Windows' move
+  // loop, and its Aero Shake minimizes VS Code when the cat is held against VS Code's edge.
+
+  let dragging = false;
+
+  function endDrag() {
+    if (dragging) {
+      dragging = false;
+      host.send({ type: 'dragEnd' });
+    }
+  }
+
+  stage.addEventListener('pointerdown', (e) => {
+    if (e.button !== 0 || !e.target.closest('.drag, .term-bar') || e.target.closest('button, textarea, input')) {
+      return;
+    }
+    e.preventDefault(); // no text selection while dragging
+    e.target.setPointerCapture(e.pointerId); // the release still reaches us if the cursor left the window
+    dragging = true;
+    host.send({ type: 'dragStart' });
+  });
+  stage.addEventListener('pointerup', endDrag);
+  stage.addEventListener('pointercancel', endDrag);
+  stage.addEventListener('lostpointercapture', endDrag);
+  stage.addEventListener('pointermove', (e) => {
+    if (dragging && e.buttons === 0) {
+      endDrag(); // the release went missing
+    }
+  });
+  window.addEventListener('blur', endDrag);
+
   window.addEventListener('message', (event) => {
     const m = event.data;
     switch (m.type) {

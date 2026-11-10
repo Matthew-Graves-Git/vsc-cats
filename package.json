@@ -48,6 +48,10 @@
         "title": "Cat Yoink: Test Minigame Terminal"
       },
       {
+        "command": "catYoink.attachWindow",
+        "title": "Cat Yoink: Attach Window Here"
+      },
+      {
         "command": "catYoink.menu",
         "title": "Cat Yoink: Menu"
       }
@@ -90,10 +94,18 @@
           "default": true,
           "description": "Open Cat Yoink and start watching every time VS Code starts (needs a channel link)."
         },
-        "catYoink.alwaysOnTop": {
-          "type": "boolean",
-          "default": true,
-          "description": "Keep the Cat Yoink window above other windows."
+        "catYoink.windowMode": {
+          "type": "string",
+          "enum": [
+            "insideVSCode",
+            "floating"
+          ],
+          "enumDescriptions": [
+            "Keep the Cat Yoink window inside the VS Code window that is watching: it follows that window, stays just above it and hides while it is minimized (Windows only; elsewhere it floats).",
+            "A free window anywhere on screen, always on top of other windows."
+          ],
+          "default": "insideVSCode",
+          "description": "Where the Cat Yoink window lives."
         }
       }
     },

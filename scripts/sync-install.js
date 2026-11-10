@@ -100,6 +100,80 @@ function same(a, b) {
   }
 }
 
+// ---- the running cat window ----
+
+/** Windows: processes running from the installed folder ({pid, helper}), i.e. the cat window's Electron. */
+function processesInExtDir() {
+  if (process.platform !== 'win32') {
+    return [];
+  }
+  const root = (path.resolve(extDir) + path.sep).toLowerCase().replace(/'/g, "''");
+  const script =
+    `Get-CimInstance Win32_Process | Where-Object { $_.ExecutablePath -and ` +
+    `$_.ExecutablePath.ToLower().StartsWith('${root}') } | ` +
+    `ForEach-Object { '{0} {1}' -f $_.ProcessId, [int]($_.CommandLine -match '--type=') }`;
+  const r = cp.spawnSync(
+    'powershell.exe',
+    ['-NoProfile', '-NonInteractive', '-EncodedCommand', Buffer.from(script, 'utf16le').toString('base64')],
+    { encoding: 'utf8', windowsHide: true }
+  );
+  return (r.stdout || '')
+    .split(/\r?\n/)
+    .map((l) => l.trim().split(' '))
+    .filter((a) => a.length === 2 && Number(a[0]) > 0)
+    .map(([pid, helper]) => ({ pid: Number(pid), helper: helper === '1' }));
+}
+
+/**
+ * The cat window runs electron.exe from the installed folder, and Windows won't delete a running
+ * exe, so VS Code can't replace the folder while it is open ("Please restart VS Code before
+ * reinstalling Cat Yoink", after deleting part of the folder). Close it first; the extension
+ * reopens it after the reload signal.
+ */
+function stopCatWindows() {
+  let procs = processesInExtDir();
+  if (!procs.length) {
+    return;
+  }
+  const kill = (pid) => cp.spawnSync('taskkill.exe', ['/PID', String(pid), '/T', '/F'], { windowsHide: true });
+  const mains = procs.filter((p) => !p.helper);
+  for (const p of mains.length ? mains : procs) {
+    kill(p.pid); // /T also ends its GPU/renderer helpers and the window tracker
+  }
+  for (let i = 0; i < 10 && (procs = processesInExtDir()).length; i++) {
+    if (i >= 2) {
+      procs.forEach((p) => kill(p.pid)); // stragglers
+    }
+    sleep(500);
+  }
+  console.log(
+    procs.length
+      ? `[sync-install] WARNING: processes still running from ${extDir}: ${procs.map((p) => p.pid).join(', ')}`
+      : '[sync-install] Closed the Cat Yoink window so the extension folder can be replaced.'
+  );
+}
+
+/**
+ * A failed reinstall can delete the installed folder while VS Code's extensions.json still lists
+ * it. Every later reinstall then fails the same way: VS Code first renames the listed folder
+ * away, which throws for a missing folder. An empty folder there lets that step succeed.
+ */
+function recreateListedFolder() {
+  if (fs.existsSync(extDir)) {
+    return;
+  }
+  try {
+    const list = JSON.parse(fs.readFileSync(path.join(path.dirname(extDir), 'extensions.json'), 'utf8'));
+    const name = path.basename(extDir).toLowerCase();
+    if (list.some((e) => String(e.relativeLocation ?? '').toLowerCase() === name)) {
+      fs.mkdirSync(extDir);
+      console.log('[sync-install] The installed folder was missing but still registered; recreated it empty so VS Code can replace it.');
+    }
+  } catch {
+    // no extensions.json yet: a first install, nothing to repair
+  }
+}
+
 // ---- slow path ----
 
 function needsFullInstall() {
@@ -134,12 +208,32 @@ function fullInstall(reason) {
   if (r.status !== 0) {
     throw new Error('vsce package failed');
   }
-  r = run('code', ['--install-extension', `"${vsix}"`, '--force']);
-  fs.rmSync(vsix, { force: true });
-  if (r.status !== 0) {
-    throw new Error('code --install-extension failed (is `code` on PATH?)');
+  const install = () => {
+    stopCatWindows();
+    recreateListedFolder();
+    return run('code', ['--install-extension', `"${vsix}"`, '--force']).status === 0;
+  };
+  // Retry once: a cat appearing mid-install can reopen the window and lock the folder again.
+  let ok = install();
+  if (!ok) {
+    console.log('[sync-install] Install failed; retrying once...');
+    ok = install();
   }
-  console.log('[sync-install] Installed. Restart VS Code or run "Developer: Reload Window" to use it.');
+  fs.rmSync(vsix, { force: true });
+  if (!ok) {
+    throw new Error('code --install-extension failed; see the output above');
+  }
+  // Same signal as the fast path: Cat Yoink in open windows loads the new build (and its window
+  // comes back), then asks for a window reload because commands or settings changed.
+  try {
+    fs.writeFileSync(path.join(extDir, '.reload'), new Date().toISOString());
+  } catch {
+    // the reload prompt below still applies
+  }
+  console.log(
+    '[sync-install] Installed. Cat Yoink in open VS Code windows reloads itself; run "Developer: Reload Window" ' +
+      '(you will be asked) so VS Code picks up the new commands and settings.'
+  );
 }
 
 // ---- fast path ----
