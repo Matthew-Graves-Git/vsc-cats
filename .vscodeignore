@@ -2,12 +2,7 @@
 src/**
 tsconfig.json
 media/icon-src/**
-media/gifs/index.html
-media/gifs/preview.png
-media/gifs/README.txt
-media/gifs/design_notes.txt
-media/gifs/cat_thunderstorm_event/README.txt
-media/gifs/cat_thunderstorm_event/preview.png
+media/gifs/**
 scripts/**
 **/*.map
 .gitignore

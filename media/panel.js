@@ -385,6 +385,15 @@
         }
         break;
       }
+      case 'gifs':
+        // The cat's clips finished downloading after it appeared: it comes in at the next loop
+        // boundary (plan() hands off from Nyan / the empty storm once they exist).
+        if (target && target.id === m.id) {
+          target.surf = target.surf || m.surf;
+          target.rain = target.rain || m.rain;
+          plan();
+        }
+        break;
       case 'rain':
         if (m.on && m.scene) {
           raining = true;

@@ -3,7 +3,8 @@ import * as vscode from 'vscode';
 import * as path from 'path';
 import { BrowserStatus, DiscordBrowser, DiscordEvent, MinigameForm } from './discordBrowser';
 import { CatWindow, TerminalMessage, windowModeSetting } from './catWindow';
-import { rainCats, rainScene, rainSet, surfSet } from './gifs';
+import { RainCat, rainCats, rainScene, rainSet, RainScene, sceneFiles, SurfSet, surfSet } from './gifs';
+import { GifSync } from './gifSync';
 import { parseCatch, parseLateCatchers, sameName, spawnCaption, spawnTitle, spawnType, spawnWord } from './catText';
 import { OwnerLock } from './lock';
 import { TEST_ROUNDS, testResultText } from './testRounds';
@@ -63,6 +64,11 @@ let stopTestRain: (() => void) | undefined;
 /** Watching started but the channel hasn't been checked for a cat yet; the window shows no Nyan. */
 let waiting = false;
 let waitTimer: NodeJS.Timeout | undefined;
+/** The downloaded surf and rain GIFs (src/gifSync.ts). */
+let gifSync: GifSync;
+let gifStatus: vscode.Disposable | undefined;
+/** A rain started before its storm clips were downloaded; they are on their way. */
+let sceneWait = false;
 
 const cfg = () => vscode.workspace.getConfiguration('catYoink');
 
@@ -73,6 +79,12 @@ export function activate(context: vscode.ExtensionContext) {
   panel.setCount(context.globalState.get<number>('catCount', 0));
   panel.onYoink = () => void yoink();
   panel.onTerminal = (m) => void onTerminalMessage(m);
+  gifSync = new GifSync(context.globalStorageUri.fsPath);
+  gifSync.onProgress = (done, total) => {
+    gifStatus?.dispose();
+    gifStatus =
+      done < total ? vscode.window.setStatusBarMessage(`$(cloud-download) Cat Yoink: downloading cat GIFs ${done}/${total}`) : undefined;
+  };
   // Earlier versions used a VS Code floating webview; close it if VS Code restores one.
   context.subscriptions.push(
     vscode.window.registerWebviewPanelSerializer('catYoink', {
@@ -147,6 +159,8 @@ export function activate(context: vscode.ExtensionContext) {
 export async function deactivate(): Promise<void> {
   clearBonus();
   stopTestRain?.();
+  gifSync?.dispose();
+  gifStatus?.dispose();
   await Promise.all([panel?.dispose(), shutdown()]);
 }
 
@@ -207,6 +221,9 @@ async function startWatching(forceLogin = false) {
     setStatus('Watching in another window');
     return;
   }
+  // Only the watching window shows cats, so only it prefetches the GIFs (other windows would
+  // download the same 183 MB in parallel). ensure() starts it too, e.g. for Test Cat Rain.
+  void gifSync.start();
 
   const c = cfg();
   const storage = ctx.globalStorageUri.fsPath;
@@ -380,12 +397,25 @@ async function onDiscordEvent(e: DiscordEvent) {
 /** Cat Bot started (or extended) a cat rain. `existing`: it was already raining when we attached. */
 function startRain(existing: boolean) {
   armRainTimer();
+  gifSync.boostRain();
   if (raining) {
     return;
   }
-  const scene = rainScene(ctx.extensionPath);
+  const scene = sceneNow();
   if (!scene) {
-    return; // no rain GIFs installed: rain looks like any other time
+    // Not downloaded yet: rain looks like any other time until the storm clips arrive.
+    if (!sceneWait) {
+      sceneWait = true;
+      void gifSync.ensure(sceneFiles()).then(() => {
+        sceneWait = false;
+        const late = sceneNow();
+        if (late && rainTimer && !raining) {
+          raining = true;
+          panel.rain(late, existing);
+        }
+      });
+    }
+    return;
   }
   raining = true;
   panel.rain(scene, existing);
@@ -416,7 +446,36 @@ async function onSpawn(e: Extract<DiscordEvent, { kind: 'spawn' }>) {
     armRainTimer();
   }
   const word = spawnWord(caption, trigger);
-  panel.spawn(e.id, spawnTitle(type), surfSet(ctx.extensionPath, word), rainSet(ctx.extensionPath, word), !!e.existing);
+  const surf = surfNow(word);
+  const rain = rainNow(word);
+  panel.spawn(e.id, spawnTitle(type), surf, rain, !!e.existing);
+  fetchLateGifs(e.id, word, surf, rain);
+}
+
+// ---------- GIFs ----------
+
+const surfNow = (word: string | undefined): SurfSet | undefined => surfSet(ctx.extensionPath, word, gifSync.dir);
+const rainNow = (word: string | undefined): RainCat | undefined => rainSet(ctx.extensionPath, word, gifSync.dir);
+const sceneNow = (): RainScene | undefined => rainScene(ctx.extensionPath, gifSync.dir);
+
+/**
+ * The spawned cat's clips for now (surf, or rain during a rain) aren't downloaded yet: fetch them
+ * first, and if the cat is still out when they arrive, the window animates it in at the next loop.
+ */
+function fetchLateGifs(id: string, word: string | undefined, surf: SurfSet | undefined, rain: RainCat | undefined) {
+  if (!word || (raining ? rain : surf)) {
+    return;
+  }
+  void gifSync.ensureCat(raining ? 'rain' : 'surf', word).then((fetched) => {
+    if (!fetched || active?.id !== id || active.resolved) {
+      return;
+    }
+    const s = surf ?? surfNow(word);
+    const r = rain ?? rainNow(word);
+    if (s !== surf || r !== rain) {
+      panel.gifs(id, s, r);
+    }
+  });
 }
 
 function countCatch(type: string) {
@@ -672,13 +731,21 @@ function testTerminal() {
  * random cats come and go, and the storm clears. Real Discord events cancel it.
  */
 function testRain() {
-  const scene = rainScene(ctx.extensionPath);
+  const scene = sceneNow();
   if (!scene) {
-    void vscode.window.showErrorMessage('Cat Yoink: the cat rain GIFs (media/gifs/cat_thunderstorm_event) are missing.');
+    gifSync.boostRain();
+    void gifSync.ensure(sceneFiles());
+    void vscode.window.showInformationMessage('Cat Yoink: the cat rain GIFs are still downloading; try again in a moment.');
     return;
   }
   if (raining || active) {
     void vscode.window.showInformationMessage('Cat Yoink: a real cat is out or a real rain is on; try again later.');
+    return;
+  }
+  const names = [...rainCats(ctx.extensionPath, gifSync.dir).keys()].filter((w) => rainNow(w));
+  if (!names.length) {
+    gifSync.boostRain();
+    void vscode.window.showInformationMessage('Cat Yoink: the rain cat GIFs are still downloading; try again in a moment.');
     return;
   }
   stopTestRain?.();
@@ -693,7 +760,6 @@ function testRain() {
     }
   };
 
-  const names = [...rainCats(ctx.extensionPath).keys()];
   const pick = () => names[Math.floor(Math.random() * names.length)];
   // Every clip is 2.5 s, so a cat needs ~9 s out to be seen looping between its enter and exit.
   // After each catch, the next cat comes 1.5 s later (a cat waiting as the exit ends walks straight
@@ -706,7 +772,7 @@ function testRain() {
     const word = pick();
     const name = word.charAt(0).toUpperCase() + word.slice(1);
     later(t, () =>
-      panel.spawn(`test-rain-${stamp}-${i}`, spawnTitle(`${name} cat`), surfSet(ctx.extensionPath, word), rainSet(ctx.extensionPath, word))
+      panel.spawn(`test-rain-${stamp}-${i}`, spawnTitle(`${name} cat`), surfNow(word), rainNow(word))
     );
     t += 9_000;
     later(t, () => panel.result(`${name} cat Yoinked! (test)`, true));

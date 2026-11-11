@@ -57,6 +57,8 @@ export type PanelMessage =
    * `skipIntro`: the cat was already there, so show its loop right away (no surf-in / rain enter).
    */
   | { type: 'spawn'; id: string; title: string; surf?: SurfSet; rain?: RainCat; skipIntro?: boolean }
+  /** Clips for spawn `id` that finished downloading after it appeared: it animates in at the next loop. */
+  | { type: 'gifs'; id: string; surf?: SurfSet; rain?: RainCat }
   /**
    * A cat rain started (`scene` set) or ended (`on` false). `skipIntro`: it was already raining,
    * so show the storm right away (no Nyan → rain start transition).
@@ -177,6 +179,16 @@ export class CatWindow {
     this.show();
     this.last = { type: 'spawn', id, title, surf, rain, skipIntro };
     this.send(this.last);
+  }
+
+  /** Spawn `id`'s clips arrived after it appeared (it is still out): the window animates it in. */
+  gifs(id: string, surf?: SurfSet, rain?: RainCat): void {
+    if (this.last.type === 'spawn' && this.last.id === id) {
+      // In place: if this spawn is still queued for a launching window, it goes out with its clips.
+      this.last.surf ??= surf;
+      this.last.rain ??= rain;
+    }
+    this.send({ type: 'gifs', id, surf, rain });
   }
 
   /** A cat rain started (`scene`) or ended (undefined). `skipIntro`: it was already raining. */

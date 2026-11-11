@@ -4,6 +4,16 @@ Watches a Discord channel for **Cat Bot** spawns ("… appeared!") and shows the
 
 While no cat is around the window plays a looping Nyan Cat GIF with an animated "Loading cat..." and a "Yoinked N Cats" counter. While a cat is out, the counter is replaced by "<Type> Cat Appeared!".
 
+### Where the GIFs come from
+
+Only the Nyan Cat loop (`media/idle.gif`) ships with the extension. The surf and rain GIFs (about 183 MB) are downloaded from [`media/gifs` in the GitHub repo](https://github.com/Matthew-Graves-Git/vsc-cats/tree/main/media/gifs) into VS Code's global storage (`globalStorage/local.cat-yoink/gifs`), in the background:
+
+- The status bar shows the progress. The shared storm clips and every cat's surf set download first, then the rain sets. Rain sets move up while a rain is on.
+- A cat that appears before its GIFs are downloaded jumps the queue. Until they arrive it is shown over Nyan with its caption and YOINK!; if it is still out once they have, it surfs (or walks) in at the next loop.
+- On every start, one request checks the repo for changes (free when nothing changed). New or changed GIFs are downloaded again, and deleted ones are removed from the cache. Once downloaded, everything works offline.
+
+To change a GIF, edit it in `media/gifs` and push to `main`: installed copies pick it up the next time VS Code starts. `npm run test-window` uses the repo's own `media/gifs`, not the cache.
+
 ## The Cat Yoink window
 
 - A frameless window (its own small Electron app, no title bar) that opens every time VS Code starts while `catYoink.autoStart` is on.
@@ -20,7 +30,7 @@ While no cat is around the window plays a looping Nyan Cat GIF with an animated 
 
 ## Cat rain
 
-When Cat Bot starts a cat rain in the channel (`/rain`, Catnip's "started a short rain!", a rain boost, or "RAIN EXTENDED"), the window switches to the thunderstorm GIFs in `media/gifs/cat_thunderstorm_event/`:
+When Cat Bot starts a cat rain in the channel (`/rain`, Catnip's "started a short rain!", a rain boost, or "RAIN EXTENDED"), the window switches to the thunderstorm GIFs (`cat_thunderstorm_event/`):
 
 1. Nyan finishes its current loop, then `nyan_exits_rain_starts.gif` plays once.
 2. If a cat is already out, its `<cat>_rain_enter.gif` plays straight away; otherwise `rain_no_cat.gif` loops until one appears (the cat enters at the end of the current storm loop).
