@@ -5,7 +5,7 @@ import * as net from 'net';
 import * as os from 'os';
 import * as path from 'path';
 import type { RainCat, RainScene, SurfSet } from './gifs';
-import { run } from './discordBrowser';
+import { appendLog, run } from './discordBrowser';
 import type { MinigameForm } from './discordBrowser';
 
 /** A window that dies this soon after launch, before saying "ready", is reported as a failed start. */
@@ -269,22 +269,7 @@ export class CatWindow {
 
   /** Appends a line to <storage>/window.log (last LOG_LINES lines kept). */
   private log(text: string): void {
-    try {
-      fs.mkdirSync(this.storageDir, { recursive: true });
-      const file = path.join(this.storageDir, 'window.log');
-      let lines: string[] = [];
-      try {
-        lines = fs.readFileSync(file, 'utf8').split('\n').filter(Boolean);
-      } catch {
-        // first entry
-      }
-      for (const l of text.split('\n').filter((s) => s.trim())) {
-        lines.push(`${new Date().toISOString()} ${l.trim().slice(0, 500)}`);
-      }
-      fs.writeFileSync(file, lines.slice(-LOG_LINES).join('\n') + '\n');
-    } catch {
-      // logging is best effort
-    }
+    appendLog(path.join(this.storageDir, 'window.log'), text, LOG_LINES);
   }
 
   private launch(): boolean {

@@ -60,6 +60,68 @@ export interface BrowserOptions {
   rainEndText: string;
   /** Where to save a copy of each minigame modal's HTML (to fix selectors if Discord changes). */
   dumpDir?: string;
+  /** Where to write browser launch problems (the user only sees a one-line summary). */
+  logFile?: string;
+}
+
+/** Thrown inside start() once stop() was called, to unwind a launch that is no longer wanted. */
+class Stopped extends Error {}
+
+type LaunchOptions = Parameters<typeof puppeteer.launch>[0];
+
+/** The browser's own words in a puppeteer launch error (its stderr), without puppeteer's boilerplate. */
+function launchDetail(e: any): string | undefined {
+  return String(e?.message ?? e)
+    .split('\n')
+    .map((l) => l.trim())
+    .filter((l) => l && !/^Failed to launch the browser process/i.test(l) && !/troubleshooting/i.test(l))[0];
+}
+
+/** Appends lines to a log file, keeping the last `maxLines`. Best effort. */
+export function appendLog(file: string, text: string, maxLines = 200): void {
+  try {
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    let lines: string[] = [];
+    try {
+      lines = fs.readFileSync(file, 'utf8').split('\n').filter(Boolean);
+    } catch {
+      // first entry
+    }
+    for (const l of text.split('\n').filter((s) => s.trim())) {
+      lines.push(`${new Date().toISOString()} ${l.trim().slice(0, 500)}`);
+    }
+    fs.writeFileSync(file, lines.slice(-maxLines).join('\n') + '\n');
+  } catch {
+    // logging is best effort
+  }
+}
+
+/**
+ * Windows: true while a browser has the profile open. Chromium keeps <profile>\lockfile open while
+ * it runs, so if we can delete it, nothing is running. Elsewhere always false (no such lock file).
+ */
+function profileInUse(profileDir: string): boolean {
+  if (process.platform !== 'win32') {
+    return false;
+  }
+  try {
+    fs.rmSync(path.join(profileDir, 'lockfile'));
+    return false;
+  } catch (e: any) {
+    return ['EBUSY', 'EPERM', 'EACCES'].includes(e?.code); // else ENOENT (never ran) or unrelated
+  }
+}
+
+/** Waits up to `ms` for the profile to be free (killed browsers take a moment to let go of it). */
+async function waitForProfileFree(profileDir: string, ms: number): Promise<boolean> {
+  const deadline = Date.now() + ms;
+  while (profileInUse(profileDir)) {
+    if (Date.now() >= deadline) {
+      return false;
+    }
+    await sleep(250);
+  }
+  return true;
 }
 
 const TEXTBOX = 'div[role="textbox"][data-slate-editor="true"]';
@@ -103,22 +165,17 @@ export function run(file: string, args: string[]): Promise<string> {
  */
 export async function killStaleBrowsers(profileDir: string, force = false): Promise<number> {
   if (process.platform === 'win32') {
-    if (!force) {
-      // Chromium keeps <profile>\lockfile open while it runs; if we can delete it, nothing is running.
-      try {
-        fs.rmSync(path.join(profileDir, 'lockfile'));
-        return 0;
-      } catch (e: any) {
-        if (!['EBUSY', 'EPERM', 'EACCES'].includes(e?.code)) {
-          return 0; // ENOENT (never ran) or something unrelated
-        }
-      }
+    if (!force && !profileInUse(profileDir)) {
+      return 0;
     }
+    // Normally just the browser processes (taskkill /T takes their children along). Forced, every
+    // process on the profile, in case a browser died and left children holding its files.
     const needle = profileDir.toLowerCase().replace(/'/g, "''");
+    const mainOnly = force ? '' : ` -and $_.CommandLine -notmatch '--type='`;
     const script =
       `Get-CimInstance Win32_Process -Filter 'Name=''msedge.exe'' OR Name=''chrome.exe''' | ` +
-      `Where-Object { $_.CommandLine -and $_.CommandLine.ToLower().Contains('${needle}') -and ` +
-      `$_.CommandLine -notmatch '--type=' } | ForEach-Object { $_.ProcessId }`;
+      `Where-Object { $_.CommandLine -and $_.CommandLine.ToLower().Contains('${needle}')${mainOnly} } | ` +
+      `ForEach-Object { $_.ProcessId }`;
     const out = await run('powershell.exe', [
       '-NoProfile',
       '-NonInteractive',
@@ -133,7 +190,7 @@ export async function killStaleBrowsers(profileDir: string, force = false): Prom
       await run('taskkill.exe', ['/PID', String(pid), '/T', '/F']);
     }
     if (pids.length) {
-      await sleep(700); // let the profile lock go
+      await waitForProfileFree(profileDir, 5000);
     }
     return pids.length;
   }
@@ -164,6 +221,8 @@ export class DiscordBrowser {
   private browser?: Browser;
   private page?: Page;
   private stopped = true;
+  /** The running start(): stop() waits for it, so no browser it is still launching outlives stop(). */
+  private starting?: Promise<void>;
   private loginLoop?: Promise<void>;
   private sessionExpiredShown = false;
   private modalTimer?: NodeJS.Timeout;
@@ -173,8 +232,18 @@ export class DiscordBrowser {
 
   constructor(private opts: BrowserOptions) {}
 
-  async start(forceLogin = false): Promise<void> {
+  start(forceLogin = false): Promise<void> {
     this.stopped = false;
+    const run = this.run(forceLogin).finally(() => {
+      if (this.starting === run) {
+        this.starting = undefined;
+      }
+    });
+    this.starting = run;
+    return run;
+  }
+
+  private async run(forceLogin: boolean): Promise<void> {
     this.onStatus('starting');
     try {
       if (!forceLogin) {
@@ -188,6 +257,9 @@ export class DiscordBrowser {
       await this.loginFlow();
     } catch (e: any) {
       await this.close();
+      if (this.stopped) {
+        return; // stop() closed the browser under us; nothing went wrong
+      }
       if (/already running|user data directory|ProcessSingleton/i.test(String(e?.message))) {
         this.onStatus('error', 'Browser profile is in use by another window.');
       } else {
@@ -196,9 +268,12 @@ export class DiscordBrowser {
     }
   }
 
+  /** Stops watching; resolves once this instance has no browser left, even one it was still launching. */
   async stop(): Promise<void> {
     this.stopped = true;
     clearTimeout(this.modalTimer);
+    await this.close(); // a running launch then fails fast instead of waiting out its timeouts
+    await Promise.all([this.starting, this.loginLoop]).catch(() => {});
     await this.close();
     this.onStatus('stopped');
   }
@@ -425,6 +500,70 @@ export class DiscordBrowser {
     }
   }
 
+  /** puppeteer.launch, unless stop() was called before or while it ran (then nothing is left open). */
+  private async openBrowser(options: LaunchOptions): Promise<Browser> {
+    if (this.stopped) {
+      throw new Stopped();
+    }
+    const portFile = path.join(this.opts.profileDir, 'DevToolsActivePort');
+    fs.rmSync(portFile, { force: true }); // a stale one would point at a browser that is gone
+    let b: Browser;
+    try {
+      b = await puppeteer.launch(options);
+    } catch (e: any) {
+      // Edge can start a copy of itself and exit (seen with Edge 157 on Windows): puppeteer sees
+      // its process quit without a word, while the copy runs on our profile with the same
+      // arguments. Connect to the copy through the port file it writes.
+      const silent = /Failed to launch the browser process/i.test(String(e?.message)) && !launchDetail(e);
+      const copy = silent ? await this.connectToCopy(portFile, options) : undefined;
+      if (!copy) {
+        throw e;
+      }
+      this.log(`${path.basename(String(options?.executablePath))} relaunched itself; connected to the copy.`);
+      b = copy;
+    }
+    if (this.stopped) {
+      await b.close().catch(() => {});
+      throw new Stopped();
+    }
+    return b;
+  }
+
+  /**
+   * Waits (up to 10 s) for a browser on our profile to write its DevTools port, then connects.
+   * Even after stop(): openBrowser() then closes the copy instead of leaving it running.
+   */
+  private async connectToCopy(portFile: string, options: LaunchOptions): Promise<Browser | undefined> {
+    const deadline = Date.now() + 10_000;
+    while (Date.now() < deadline) {
+      let port = '';
+      let wsPath = '';
+      try {
+        [port, wsPath] = fs.readFileSync(portFile, 'utf8').split(/\r?\n/).map((s) => s.trim());
+      } catch {
+        // not written yet
+      }
+      if (/^\d+$/.test(port) && wsPath.startsWith('/devtools/browser/')) {
+        try {
+          return await puppeteer.connect({
+            browserWSEndpoint: `ws://127.0.0.1:${port}${wsPath}`,
+            defaultViewport: options?.defaultViewport,
+          });
+        } catch {
+          // still starting up; try again
+        }
+      }
+      await sleep(200);
+    }
+    return undefined;
+  }
+
+  private log(text: string): void {
+    if (this.opts.logFile) {
+      appendLog(this.opts.logFile, text);
+    }
+  }
+
   /** Launches the browser and navigates to the channel. Resolves to whether we're logged in. */
   private async launch(headless: boolean): Promise<boolean> {
     const exe = detectBrowser(this.opts.browserPath);
@@ -446,22 +585,29 @@ export class DiscordBrowser {
       ],
       ignoreDefaultArgs: ['--enable-automation'],
     };
+    const profile = this.opts.profileDir;
     // A browser left over from a crashed VS Code window would block this launch.
-    await killStaleBrowsers(this.opts.profileDir).catch(() => 0);
+    await killStaleBrowsers(profile).catch(() => 0);
     try {
-      this.browser = await puppeteer.launch(options);
+      this.browser = await this.openBrowser(options);
     } catch (e: any) {
-      if (!/Failed to launch the browser process/i.test(String(e?.message))) {
+      if (e instanceof Stopped || !/Failed to launch the browser process/i.test(String(e?.message))) {
         throw e;
       }
-      await killStaleBrowsers(this.opts.profileDir, true).catch(() => 0);
+      this.log(`${path.basename(exe)} failed to launch, killing browsers on the profile and retrying:\n${e?.message ?? e}`);
+      await killStaleBrowsers(profile, true).catch(() => 0);
       try {
-        this.browser = await puppeteer.launch(options);
+        this.browser = await this.openBrowser(options);
       } catch (e2: any) {
-        const detail = String(e2?.message ?? e2)
-          .split('\n')
-          .map((l) => l.trim())
-          .filter((l) => l && !/^Failed to launch the browser process/i.test(l) && !/troubleshooting/i.test(l))[0];
+        if (e2 instanceof Stopped) {
+          throw e2;
+        }
+        this.log(`${path.basename(exe)} failed to launch again:\n${e2?.message ?? e2}`);
+        // A browser still on our profile makes the new one hand off to it and quit without a word,
+        // so puppeteer's message has no detail; say what is actually wrong.
+        const detail = profileInUse(profile)
+          ? `another browser is still using the Cat Yoink profile (${profile}). Close it or restart VS Code.`
+          : launchDetail(e2);
         throw new Error(`Couldn't start ${path.basename(exe)} for Discord${detail ? `: ${detail}` : '.'}`);
       }
     }
@@ -487,6 +633,9 @@ export class DiscordBrowser {
     const page = this.page!;
     const deadline = Date.now() + 45000;
     while (Date.now() < deadline) {
+      if (this.stopped) {
+        throw new Stopped();
+      }
       const url = page.url();
       if (/discord\.com\/login/.test(url)) {
         return false;

@@ -6,6 +6,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import * as vscode from 'vscode';
+import { killStaleBrowsers } from './discordBrowser';
 
 export const OLD_ID = 'local.cat-yoink';
 
@@ -48,8 +49,8 @@ export function offerMove(ctx: vscode.ExtensionContext): void {
 /**
  * A normal start (the old build isn't installed): takes over the old build's data if it was
  * uninstalled by hand, then deletes what is left of its storage (the old cat window's Electron
- * profile, logs, lock files). Renames only: a slow copy here would hold up activation. Whatever
- * can't be renamed yet (a leftover browser still has the profile open) is tried again next start.
+ * profile, logs, lock files). Renames only: a slow copy here would hold up activation. The login
+ * profile can't be renamed while a leftover browser has it open; adoptOldProfile() retries it.
  */
 export function adoptOldData(ctx: vscode.ExtensionContext): void {
   const from = oldDir(ctx);
@@ -61,12 +62,33 @@ export function adoptOldData(ctx: vscode.ExtensionContext): void {
   }
 }
 
+/**
+ * Before our first browser launch: if the old build's login profile is still there (a leftover
+ * browser held it when adoptOldData ran), kill that browser and move the profile. It has to happen
+ * before the launch, which would create our own profile and make the old one lose ("ours wins").
+ * Call it while holding the OwnerLock.
+ */
+export async function adoptOldProfile(ctx: vscode.ExtensionContext): Promise<void> {
+  const from = oldDir(ctx);
+  const profile = path.join(from, 'browser-profile');
+  if (isOldBuild(ctx) || !fs.existsSync(profile)) {
+    return;
+  }
+  await killStaleBrowsers(profile).catch(() => 0);
+  if (renameOver(from, ctx.globalStorageUri.fsPath).length === 0) {
+    await fs.promises.rm(from, { recursive: true, force: true }).catch(() => {});
+  }
+}
+
 async function moveOver(ctx: vscode.ExtensionContext): Promise<void> {
   const from = oldDir(ctx);
   const to = ctx.globalStorageUri.fsPath;
   // While the old build is installed the catYoink.* commands are its own: this stops its watching,
   // which closes its headless browser so the login profile can be moved.
   await Promise.resolve(vscode.commands.executeCommand('catYoink.stop')).catch(() => {});
+  // A browser the old build left behind (a crashed window, or another window still running it)
+  // would block the rename and force a copy, which loses the login.
+  await killStaleBrowsers(path.join(from, 'browser-profile')).catch(() => 0);
   const failed = await vscode.window.withProgress(
     { location: vscode.ProgressLocation.Notification, title: 'Cat Yoink: moving your data from the old version…' },
     () => copyOver(from, to, renameOver(from, to))

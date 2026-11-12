@@ -7,7 +7,7 @@ import { RainCat, rainCats, rainScene, rainSet, RainScene, sceneFiles, SurfSet, 
 import { GifSync } from './gifSync';
 import { parseCatch, parseLateCatchers, sameName, spawnCaption, spawnTitle, spawnType, spawnWord } from './catText';
 import { OwnerLock } from './lock';
-import { adoptOldData, offerMove, oldBuildInstalled } from './migrate';
+import { adoptOldData, adoptOldProfile, offerMove, oldBuildInstalled } from './migrate';
 import { TEST_ROUNDS, testResultText } from './testRounds';
 import { checkForUpdates } from './updateCheck';
 
@@ -172,7 +172,7 @@ export async function deactivate(): Promise<void> {
   stopTestRain?.();
   gifSync?.dispose();
   gifStatus?.dispose();
-  await Promise.all([panel?.dispose(), shutdown()]);
+  await Promise.all([panel?.dispose(), serial(() => shutdown())]);
 }
 
 // ---------- commands ----------
@@ -190,8 +190,12 @@ async function setChannel() {
   if (!url) {
     return;
   }
+  // A running browser is restarted on the new link by the settings listener (activate()).
+  const listenerRestarts = !!browser && url.trim() !== cfg().get<string>('channelUrl', '').trim();
   await cfg().update('channelUrl', url.trim(), vscode.ConfigurationTarget.Global);
-  await startWatching();
+  if (!listenerRestarts) {
+    await startWatching();
+  }
 }
 
 type MenuItem = vscode.QuickPickItem & { run?: () => unknown };
@@ -253,13 +257,32 @@ async function startWatching(forceLogin = false) {
     }
     return;
   }
+  const started = await serial(() => replaceBrowser(channelUrl, forceLogin));
+  await started?.done;
+}
 
+/**
+ * Browser swaps (start, restart, stop) run one at a time. Two at once, e.g. Set Channel saving the
+ * link (which fires the settings listener) and then starting itself, would each launch a browser
+ * on the same profile: the second hands off to the first one's Edge and quits, which puppeteer
+ * reports as "Couldn't start msedge.exe for Discord."
+ */
+let swaps: Promise<unknown> = Promise.resolve();
+function serial<T>(fn: () => Promise<T>): Promise<T> {
+  const next = swaps.then(fn);
+  swaps = next.catch(() => {});
+  return next;
+}
+
+/** Stops the current browser and starts a new one. `done` settles once the new one is watching (or failed). */
+async function replaceBrowser(channelUrl: string, forceLogin: boolean): Promise<{ done: Promise<void> } | undefined> {
   await shutdown(false);
 
   if (!lock.acquire()) {
     setStatus('Watching in another window');
-    return;
+    return undefined;
   }
+  await adoptOldProfile(ctx);
   // Only the watching window shows cats, so only it prefetches the GIFs (other windows would
   // download the same 183 MB in parallel). ensure() starts it too, e.g. for Test Cat Rain.
   void gifSync.start();
@@ -277,6 +300,7 @@ async function startWatching(forceLogin = false) {
     rainStartText: c.get<string>('rainStartText', RAIN_START_DEFAULT),
     rainEndText: c.get<string>('rainEndText', RAIN_END_DEFAULT),
     dumpDir: path.join(storage, 'minigame-dumps'),
+    logFile: path.join(storage, 'browser.log'),
   });
   b.onEvent = (e) => void onDiscordEvent(e);
   b.onStatus = (s, d) => onBrowserStatus(b, s, d);
@@ -284,11 +308,12 @@ async function startWatching(forceLogin = false) {
 
   panel.show();
   beginWaiting();
-  await b.start(forceLogin);
+  // Not awaited here: the next swap may stop this one mid-launch (stop() waits for the launch).
+  return { done: b.start(forceLogin) };
 }
 
 async function stopWatching() {
-  await shutdown(true);
+  await serial(() => shutdown(true));
   panel.idle(); // so "Show panel" later opens on Nyan, not the loading screen
   panel.hide();
 }

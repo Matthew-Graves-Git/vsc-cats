@@ -2,7 +2,7 @@
   "name": "cat-yoink",
   "displayName": "Cat Yoink",
   "description": "Watches a Discord channel for Cat Bot spawns and lets you yoink them from VS Code.",
-  "version": "1.0.2",
+  "version": "1.0.3",
   "publisher": "matthewgraves",
   "license": "MIT",
   "icon": "media/cat-logo-128.png",
