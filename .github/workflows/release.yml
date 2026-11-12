@@ -4,9 +4,9 @@
 #             (the pushed tag, e.g. v1.0.3, must match package.json's version)
 #   Dry run:  Actions tab > Release > Run workflow: builds the .vsix as a downloadable artifact only.
 #
-# Runs on Windows because the .vsix ships the Electron build that `npm ci` downloads for the
-# machine it runs on (the cat window needs the win32-x64 electron.exe). Nothing goes to the
-# Marketplace.
+# Runs on Windows because the .vsix ships the Electron build downloaded for the machine it runs on
+# (the cat window needs the win32-x64 electron.exe; `vscode:prepublish` runs install-electron).
+# Nothing goes to the Marketplace.
 name: Release
 
 on:
@@ -21,11 +21,11 @@ jobs:
   vsix:
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
-          node-version: 20
+          node-version: 24
           cache: npm
 
       - run: npm ci
@@ -54,7 +54,7 @@ jobs:
 
       - name: Keep the .vsix (dry run)
         if: github.event_name == 'workflow_dispatch'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: cat-yoink-vsix
           path: cat-yoink-win32-x64-*.vsix

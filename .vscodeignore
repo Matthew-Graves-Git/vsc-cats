@@ -30,8 +30,8 @@ node_modules/@puppeteer/browsers/{src,lib/esm}/**
 # ---- electron: only dist/ + path.txt are used (src/catWindow.ts electronPath) ----
 node_modules/electron/{node_modules/**,electron.d.ts,cli.js,install.js,checksums.json}
 # its install-time downloader (@electron/get) and that dependency tree
-**/node_modules/{@electron,got,@sindresorhus,@szmarczak,defer-to-connect,cacheable-lookup,cacheable-request,clone-response,mimic-response,http-cache-semantics,keyv,json-buffer,lowercase-keys,normalize-url,responselike,decompress-response,http2-wrapper,quick-lru,resolve-alpn,p-cancelable,global-agent,roarr,boolean,es6-error,matcher,escape-string-regexp,detect-node,globalthis,define-properties,define-data-property,es-define-property,es-errors,gopd,has-property-descriptors,object-keys,json-stringify-safe,semver-compare,sprintf-js,serialize-error,type-fest,fs-extra,graceful-fs,jsonfile,universalify,env-paths,sumchecker,@types,undici-types}/**
+**/node_modules/{@electron,got,@sindresorhus,@szmarczak,defer-to-connect,cacheable-lookup,cacheable-request,clone-response,mimic-response,http-cache-semantics,keyv,json-buffer,lowercase-keys,normalize-url,responselike,decompress-response,http2-wrapper,quick-lru,resolve-alpn,p-cancelable,global-agent,roarr,boolean,es6-error,matcher,escape-string-regexp,detect-node,globalthis,define-properties,define-data-property,es-define-property,es-errors,gopd,has-property-descriptors,object-keys,json-stringify-safe,semver-compare,sprintf-js,serialize-error,type-fest,fs-extra,graceful-fs,jsonfile,universalify,env-paths,sumchecker,@types,undici-types,@electron-internal,undici}/**
 # English locale only (saves ~40 MB unpacked)
 node_modules/electron/dist/locales/**
 !node_modules/electron/dist/locales/en-US.pak
-# Every DLL in dist/ stays: the GPU process loads dxcompiler, dxil and vk_swiftshader at startup.
+# Every DLL in dist/ stays: the GPU process loads dxcompiler and vk_swiftshader at startup.

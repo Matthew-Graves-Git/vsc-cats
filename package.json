@@ -153,17 +153,17 @@
     "icons": "node scripts/build-icons.js",
     "test-window": "node scripts/test-window.js",
     "sync-install": "node scripts/sync-install.js",
-    "vscode:prepublish": "npm run compile",
+    "vscode:prepublish": "install-electron && npm run compile",
     "package": "vsce package --target win32-x64"
   },
   "dependencies": {
-    "electron": "39.8.10",
+    "electron": "45.3.1",
     "puppeteer-core": "^23.11.1"
   },
   "devDependencies": {
     "@types/node": "^20.10.0",
     "@types/vscode": "^1.85.0",
-    "@vscode/vsce": "^2.19.0",
+    "@vscode/vsce": "^4.1.0",
     "fantasticon": "^3.0.0",
     "typescript": "^5.6.3"
   }

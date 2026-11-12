@@ -64,7 +64,7 @@ The first real minigame saves a copy of Discord's question dialog in the extensi
 
 ## Development
 
-1. `npm install`, then `npm run compile`. (Electron 39 is used because newer Electron installers need Node 22.)
+1. Use Node 24 or newer (`@vscode/vsce` 4 needs Node 22+, Electron 45's installer 22.12+). Run `npm install`, then `npm run compile`. Since Electron 42 the `electron` package no longer downloads its binary on install: `npm run package` fetches it (`install-electron`), and so does `npm run test-window` on first use.
 2. Install it once: `npm run package` and `code --install-extension cat-yoink-win32-x64-<version>.vsix`, then reload the window.
    After that, **F5** compiles, copies the build into the installed extension (`scripts/sync-install.js`) and Cat Yoink reloads itself in the open VS Code window(s) — no new window, and other extensions keep running. Changes to commands or settings in `package.json` still need a window reload (you'll be asked).
 
