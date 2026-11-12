@@ -114,7 +114,7 @@ function processesInExtDir() {
     `ForEach-Object { '{0} {1}' -f $_.ProcessId, [int]($_.CommandLine -match '--type=') }`;
   const r = cp.spawnSync(
     'powershell.exe',
-    ['-NoProfile', '-NonInteractive', '-EncodedCommand', Buffer.from(script, 'utf16le').toString('base64')],
+    ['-NoProfile', '-NonInteractive', '-Command', script],
     { encoding: 'utf8', windowsHide: true }
   );
   return (r.stdout || '')

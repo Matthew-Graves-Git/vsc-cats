@@ -15,9 +15,9 @@ import * as path from 'path';
 import { catPrefix, gifDurationFromBuffer, primeDuration, rainFiles, RAIN_DIR, resetGifCache, sceneFiles, surfFiles } from './gifs';
 
 const OWNER = 'Matthew-Graves-Git';
-const REPO = 'vsc-cats';
+const REPO = 'vsc_cat_extension';
 const BRANCH = 'main';
-const PREFIX = 'media/gifs/';
+const PREFIX = 'gifs/';
 const TREE_URL = `https://api.github.com/repos/${OWNER}/${REPO}/git/trees/${BRANCH}?recursive=1`;
 const RAW_URL = `https://raw.githubusercontent.com/${OWNER}/${REPO}/${BRANCH}/${PREFIX}`;
 const HEADERS = { 'User-Agent': 'cat-yoink' };

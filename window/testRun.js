@@ -7,6 +7,8 @@
 //   4. the rain clears and Nyan returns
 //
 // Every step waits for you but times out, so a run always finishes. The X button quits.
+const fs = require('fs');
+const os = require('os');
 const path = require('path');
 
 const OUT = path.join(__dirname, '..', 'out');
@@ -15,6 +17,29 @@ const { spawnTitle } = require(path.join(OUT, 'catText.js'));
 const { TEST_ROUNDS, testResultText } = require(path.join(OUT, 'testRounds.js'));
 
 const ROOT = path.join(__dirname, '..');
+
+/**
+ * Where the surf and rain GIFs come from: $CAT_YOINK_GIFS, a local media/gifs (the repo no longer
+ * has one), else the cache the installed extension downloaded (src/gifSync.ts).
+ */
+function findGifDir() {
+  const appData =
+    process.platform === 'win32'
+      ? process.env.APPDATA
+      : process.platform === 'darwin'
+        ? path.join(os.homedir(), 'Library', 'Application Support')
+        : process.env.XDG_CONFIG_HOME || path.join(os.homedir(), '.config');
+  const cache = (id) => appData && path.join(appData, 'Code', 'User', 'globalStorage', id, 'gifs');
+  const candidates = [
+    process.env.CAT_YOINK_GIFS,
+    path.join(ROOT, 'media', 'gifs'),
+    cache('matthewgraves.cat-yoink'),
+    cache('local.cat-yoink'), // until the old build's data has moved over (src/migrate.ts)
+  ];
+  return candidates.find((d) => d && fs.existsSync(d)) || path.join(ROOT, 'media', 'gifs');
+}
+
+const GIFS = findGifDir();
 
 const YOINK_WAIT_MS = 15_000;
 const RAIN_YOINK_WAIT_MS = 9_000; // every rain clip is 2.5 s: ~9 s out shows enter, loop and exit
@@ -95,14 +120,15 @@ module.exports = function startTestRun({ post }) {
   }
 
   async function run() {
-    const surfNames = [...surfCats(ROOT).keys()].filter((w) => surfSet(ROOT, w));
-    const rainNames = [...rainCats(ROOT).keys()].filter((w) => rainSet(ROOT, w));
-    const scene = rainScene(ROOT);
+    log(`GIFs from ${GIFS}`);
+    const surfNames = [...surfCats(ROOT, GIFS).keys()].filter((w) => surfSet(ROOT, w, GIFS));
+    const rainNames = [...rainCats(ROOT, GIFS).keys()].filter((w) => rainSet(ROOT, w, GIFS));
+    const scene = rainScene(ROOT, GIFS);
     if (!surfNames.length) {
-      log('no surf GIFs found (media/gifs); skipping the surfing cat');
+      log('no surf GIFs found there; skipping the surfing cat (set CAT_YOINK_GIFS to a gifs folder)');
     }
     if (!scene || !rainNames.length) {
-      log('no rain GIFs found (media/gifs/cat_thunderstorm_event); skipping the rain');
+      log('no rain GIFs found there (cat_thunderstorm_event/); skipping the rain');
     }
 
     log('waiting for the window');
@@ -116,7 +142,7 @@ module.exports = function startTestRun({ post }) {
       const word = pickOne(surfNames);
       const name = cap(word);
       log(`spawn: ${name} cat`);
-      post({ type: 'spawn', id: `test-surf-${Date.now()}`, title: spawnTitle(`${name} cat`), surf: surfSet(ROOT, word) });
+      post({ type: 'spawn', id: `test-surf-${Date.now()}`, title: spawnTitle(`${name} cat`), surf: surfSet(ROOT, word, GIFS) });
       const clicked = await waitFor(['yoink'], YOINK_WAIT_MS);
       log(clicked ? 'yoinked' : 'no click: yoinking it for you');
       await sleep(800);
@@ -143,8 +169,8 @@ module.exports = function startTestRun({ post }) {
           type: 'spawn',
           id: `test-rain-${stamp}-${i}`,
           title: spawnTitle(`${name} cat`),
-          surf: surfSet(ROOT, words[i]),
-          rain: rainSet(ROOT, words[i]),
+          surf: surfSet(ROOT, words[i], GIFS),
+          rain: rainSet(ROOT, words[i], GIFS),
         });
         const clicked = await waitFor(['yoink'], RAIN_YOINK_WAIT_MS);
         if (clicked) {

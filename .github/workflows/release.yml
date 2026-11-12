@@ -1,0 +1,61 @@
+# Builds the Cat Yoink .vsix and publishes it as a GitHub release.
+#
+#   Release:  npm version patch && git push --follow-tags
+#             (the pushed tag, e.g. v1.0.3, must match package.json's version)
+#   Dry run:  Actions tab > Release > Run workflow: builds the .vsix as a downloadable artifact only.
+#
+# Runs on Windows because the .vsix ships the Electron build that `npm ci` downloads for the
+# machine it runs on (the cat window needs the win32-x64 electron.exe). Nothing goes to the
+# Marketplace.
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: write # create the release and attach the .vsix
+
+jobs:
+  vsix:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - run: npm ci
+
+      - name: Check the tag matches package.json
+        if: github.event_name == 'push'
+        shell: bash
+        run: |
+          want="v$(node -p "require('./package.json').version")"
+          if [ "$want" != "$GITHUB_REF_NAME" ]; then
+            echo "::error::Tag $GITHUB_REF_NAME doesn't match package.json version $want"
+            exit 1
+          fi
+
+      # vsce package --target win32-x64; its prepublish step compiles.
+      - run: npm run package
+
+      - name: Publish the GitHub release
+        if: github.event_name == 'push'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: >
+          gh release create "$GITHUB_REF_NAME" cat-yoink-win32-x64-*.vsix
+          --repo "$GITHUB_REPOSITORY" --title "Cat Yoink $GITHUB_REF_NAME" --generate-notes
+
+      - name: Keep the .vsix (dry run)
+        if: github.event_name == 'workflow_dispatch'
+        uses: actions/upload-artifact@v4
+        with:
+          name: cat-yoink-vsix
+          path: cat-yoink-win32-x64-*.vsix
+          if-no-files-found: error

@@ -1,13 +1,37 @@
+# ---- sources and tooling (ships: out/, window/, media/, package.json, README, runtime node_modules) ----
 .vscode/**
+.github/**
 src/**
-tsconfig.json
-media/icon-src/**
-media/gifs/**
 scripts/**
-**/*.map
+media/icon-src/**
+tsconfig.json
 .gitignore
 claude.md
 *.vsix
-# Electron: keep only the English locale (saves ~40 MB)
+**/*.map
+
+# ---- node_modules: files Node never loads ----
+node_modules/**/*.{ts,mts,cts}
+node_modules/**/{README,CHANGELOG,HISTORY}.md
+node_modules/**/tsconfig*.json
+node_modules/puppeteer-core/{src,lib/esm,lib/es5-iife}/**
+node_modules/@puppeteer/browsers/{src,lib/esm}/**
+
+# ---- puppeteer: packages never loaded (Edge/Chrome launch over CDP; we never download a browser) ----
+# WebDriver BiDi (Firefox only) and type-only packages
+**/node_modules/{chromium-bidi,zod,mitt,devtools-protocol,typed-query-selector}/**
+# Bare-runtime builds pulled in by tar-fs/streamx
+**/node_modules/{bare-*,teex}/**
+# proxy agents, lazily required only when downloading a browser through a proxy
+**/node_modules/{http-proxy-agent,https-proxy-agent,socks-proxy-agent,socks,ip-address,smart-buffer,pac-proxy-agent,pac-resolver,degenerator,ast-types,escodegen,esprima,estraverse,esutils,source-map,tslib,netmask,get-uri,basic-ftp,data-uri-to-buffer,@tootallnate}/**
+# unbzip2-stream's buffer polyfill (Node resolves require('buffer') to the builtin)
+**/node_modules/{buffer,base64-js,ieee754}/**
+
+# ---- electron: only dist/ + path.txt are used (src/catWindow.ts electronPath) ----
+node_modules/electron/{node_modules/**,electron.d.ts,cli.js,install.js,checksums.json}
+# its install-time downloader (@electron/get) and that dependency tree
+**/node_modules/{@electron,got,@sindresorhus,@szmarczak,defer-to-connect,cacheable-lookup,cacheable-request,clone-response,mimic-response,http-cache-semantics,keyv,json-buffer,lowercase-keys,normalize-url,responselike,decompress-response,http2-wrapper,quick-lru,resolve-alpn,p-cancelable,global-agent,roarr,boolean,es6-error,matcher,escape-string-regexp,detect-node,globalthis,define-properties,define-data-property,es-define-property,es-errors,gopd,has-property-descriptors,object-keys,json-stringify-safe,semver-compare,sprintf-js,serialize-error,type-fest,fs-extra,graceful-fs,jsonfile,universalify,env-paths,sumchecker,@types,undici-types}/**
+# English locale only (saves ~40 MB unpacked)
 node_modules/electron/dist/locales/**
 !node_modules/electron/dist/locales/en-US.pak
+# Every DLL in dist/ stays: the GPU process loads dxcompiler, dxil and vk_swiftshader at startup.

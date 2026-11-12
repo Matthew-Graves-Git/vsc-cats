@@ -7,7 +7,9 @@ import { RainCat, rainCats, rainScene, rainSet, RainScene, sceneFiles, SurfSet, 
 import { GifSync } from './gifSync';
 import { parseCatch, parseLateCatchers, sameName, spawnCaption, spawnTitle, spawnType, spawnWord } from './catText';
 import { OwnerLock } from './lock';
+import { adoptOldData, offerMove, oldBuildInstalled } from './migrate';
 import { TEST_ROUNDS, testResultText } from './testRounds';
+import { checkForUpdates } from './updateCheck';
 
 const CHANNEL_RE = /^https:\/\/(?:\w+\.)?discord(?:app)?\.com\/channels\/(\d+|@me)\/\d+\/?$/;
 const CONFIRM_TIMEOUT_MS = 30_000;
@@ -74,6 +76,13 @@ const cfg = () => vscode.workspace.getConfiguration('catYoink');
 
 export function activate(context: vscode.ExtensionContext) {
   ctx = context;
+  // The old 0.x build (local.cat-yoink) registers the same commands; it keeps running, and this
+  // build stays idle, until the user moves over (src/migrate.ts). deactivate() copes with that.
+  if (oldBuildInstalled(context)) {
+    offerMove(context);
+    return;
+  }
+  adoptOldData(context); // before anything below reads the storage folder
   lock = new OwnerLock(context.globalStorageUri.fsPath);
   panel = new CatWindow(context.extensionPath, context.globalStorageUri.fsPath);
   panel.setCount(context.globalState.get<number>('catCount', 0));
@@ -130,6 +139,7 @@ export function activate(context: vscode.ExtensionContext) {
     panel.claimOwner(true); // the command palette just focused this window, so it is in front
   });
   reg('catYoink.menu', menu);
+  reg('catYoink.checkUpdates', () => checkForUpdates(ctx, true));
 
   context.subscriptions.push(
     statusItem,
@@ -153,6 +163,7 @@ export function activate(context: vscode.ExtensionContext) {
   if (cfg().get<boolean>('autoStart', true) && cfg().get<string>('channelUrl')) {
     void startWatching();
   }
+  void checkForUpdates(context, false); // at most once a day
 }
 
 /** Stops the browser and closes the cat window; resolves once both are gone. */
@@ -183,21 +194,49 @@ async function setChannel() {
   await startWatching();
 }
 
+type MenuItem = vscode.QuickPickItem & { run?: () => unknown };
+
+/** Where a toggle writes: the workspace if it overrides the setting there (else the toggle would do nothing), otherwise user settings. */
+function settingTarget(key: string): vscode.ConfigurationTarget {
+  return cfg().inspect(key)?.workspaceValue !== undefined
+    ? vscode.ConfigurationTarget.Workspace
+    : vscode.ConfigurationTarget.Global;
+}
+
 async function menu() {
   const running = !!browser;
-  const pick = await vscode.window.showQuickPick(
-    [
-      running ? { label: 'Stop watching', id: 'catYoink.stop' } : { label: 'Start watching', id: 'catYoink.start' },
-      { label: 'Log in to Discord (show browser)', id: 'catYoink.login' },
-      { label: 'Show panel', id: 'catYoink.showPanel' },
-      { label: 'Attach window here', id: 'catYoink.attachWindow' },
-      { label: 'Set channel link', id: 'catYoink.setChannel' },
-    ],
-    { title: 'Cat Yoink' }
-  );
-  if (pick) {
-    await vscode.commands.executeCommand(pick.id);
-  }
+  const autoStart = cfg().get<boolean>('autoStart', true);
+  const floating = windowModeSetting() === 'floating';
+  const cmd = (label: string, id: string): MenuItem => ({ label, run: () => vscode.commands.executeCommand(id) });
+  const items: MenuItem[] = [
+    running ? cmd('Stop watching', 'catYoink.stop') : cmd('Start watching', 'catYoink.start'),
+    cmd('Log in to Discord (show browser)', 'catYoink.login'),
+    cmd('Show panel', 'catYoink.showPanel'),
+    cmd('Attach window here', 'catYoink.attachWindow'),
+    cmd('Set channel link', 'catYoink.setChannel'),
+    cmd('Check for updates', 'catYoink.checkUpdates'),
+    { label: 'Options', kind: vscode.QuickPickItemKind.Separator },
+    {
+      label: `$(${autoStart ? 'check' : 'circle-large-outline'}) Start with VS Code`,
+      description: autoStart ? 'On' : 'Off',
+      detail: 'Open Cat Yoink and start watching every time VS Code starts',
+      run: async () => {
+        await cfg().update('autoStart', !autoStart, settingTarget('autoStart'));
+        vscode.window.setStatusBarMessage(`$(cat-yoink-cat) Cat Yoink: start with VS Code ${autoStart ? 'off' : 'on'}`, 3000);
+      },
+    },
+    {
+      label: `$(${floating ? 'pinned' : 'window'}) Window: ${floating ? 'Always on top' : 'Inside VS Code'}`,
+      description: 'click to switch',
+      detail: floating
+        ? 'Switch to: kept inside the VS Code window, hidden while it is minimized'
+        : 'Switch to: a free window anywhere on screen, always on top',
+      // onDidChangeConfiguration restarts the window in the new mode.
+      run: () => cfg().update('windowMode', floating ? 'insideVSCode' : 'floating', settingTarget('windowMode')),
+    },
+  ];
+  const pick = await vscode.window.showQuickPick(items, { title: 'Cat Yoink' });
+  await pick?.run?.();
 }
 
 // ---------- watching ----------

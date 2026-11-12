@@ -116,14 +116,14 @@ export async function killStaleBrowsers(profileDir: string, force = false): Prom
     }
     const needle = profileDir.toLowerCase().replace(/'/g, "''");
     const script =
-      `Get-CimInstance Win32_Process -Filter "Name='msedge.exe' OR Name='chrome.exe'" | ` +
+      `Get-CimInstance Win32_Process -Filter 'Name=''msedge.exe'' OR Name=''chrome.exe''' | ` +
       `Where-Object { $_.CommandLine -and $_.CommandLine.ToLower().Contains('${needle}') -and ` +
       `$_.CommandLine -notmatch '--type=' } | ForEach-Object { $_.ProcessId }`;
     const out = await run('powershell.exe', [
       '-NoProfile',
       '-NonInteractive',
-      '-EncodedCommand',
-      Buffer.from(script, 'utf16le').toString('base64'),
+      '-Command',
+      script,
     ]);
     const pids = out
       .split(/\s+/)

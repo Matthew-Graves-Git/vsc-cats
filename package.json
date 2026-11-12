@@ -2,16 +2,21 @@
   "name": "cat-yoink",
   "displayName": "Cat Yoink",
   "description": "Watches a Discord channel for Cat Bot spawns and lets you yoink them from VS Code.",
-  "version": "0.2.0",
-  "publisher": "local",
+  "version": "1.0.2",
+  "publisher": "matthewgraves",
   "license": "MIT",
-  "icon": "media/icon.png",
+  "icon": "media/cat-logo-128.png",
   "engines": {
     "vscode": "^1.85.0"
   },
   "categories": [
     "Other"
   ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Matthew-Graves-Git/vsc-cats.git"
+  },
+  "homepage": "https://github.com/Matthew-Graves-Git/vsc-cats/blob/main/README.md",
   "activationEvents": [
     "onStartupFinished",
     "onWebviewPanel:catYoink"
@@ -58,6 +63,10 @@
       {
         "command": "catYoink.menu",
         "title": "Cat Yoink: Menu"
+      },
+      {
+        "command": "catYoink.checkUpdates",
+        "title": "Cat Yoink: Check for Updates"
       }
     ],
     "configuration": {
@@ -120,6 +129,11 @@
           ],
           "default": "insideVSCode",
           "description": "Where the Cat Yoink window lives."
+        },
+        "catYoink.checkForUpdates": {
+          "type": "boolean",
+          "default": true,
+          "description": "Once a day, check GitHub for a newer Cat Yoink release and offer its download page. Cat Yoink isn't on the Marketplace, so nothing else updates it."
         }
       }
     },
@@ -140,7 +154,7 @@
     "test-window": "node scripts/test-window.js",
     "sync-install": "node scripts/sync-install.js",
     "vscode:prepublish": "npm run compile",
-    "package": "vsce package"
+    "package": "vsce package --target win32-x64"
   },
   "dependencies": {
     "electron": "39.8.10",

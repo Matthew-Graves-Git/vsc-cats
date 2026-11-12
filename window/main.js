@@ -229,7 +229,7 @@ function startTracker() {
     `Add-Type -Path '${cs}'; [CatTracker]::Run()`;
   const proc = cp.spawn(
     'powershell.exe',
-    ['-NoProfile', '-NonInteractive', '-EncodedCommand', Buffer.from(script, 'utf16le').toString('base64')],
+    ['-NoProfile', '-NonInteractive', '-Command', script],
     { stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true }
   );
   tracker = proc;

@@ -31,8 +31,8 @@ async function killStaleWindows(extensionPath: string): Promise<void> {
   const out = await run('powershell.exe', [
     '-NoProfile',
     '-NonInteractive',
-    '-EncodedCommand',
-    Buffer.from(script, 'utf16le').toString('base64'),
+    '-Command',
+    script,
   ]);
   for (const pid of out.split(/\s+/).map(Number).filter((n) => Number.isInteger(n) && n > 0)) {
     await run('taskkill.exe', ['/PID', String(pid), '/T', '/F']);
