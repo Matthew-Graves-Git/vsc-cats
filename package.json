@@ -4,6 +4,10 @@
   "description": "Watches a Discord channel for Cat Bot spawns and lets you yoink them from VS Code.",
   "version": "1.0.3",
   "publisher": "matthewgraves",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Matthew-Graves-Git/vsc-cats.git"
+  },
   "license": "MIT",
   "icon": "media/cat-logo-128.png",
   "engines": {
@@ -12,10 +16,9 @@
   "categories": [
     "Other"
   ],
-  "repository": {
-    "type": "git",
-    "url": "https://github.com/Matthew-Graves-Git/vsc-cats.git"
-  },
+  "extensionKind": [
+    "ui"
+  ],
   "homepage": "https://github.com/Matthew-Graves-Git/vsc-cats/blob/main/README.md",
   "activationEvents": [
     "onStartupFinished",
@@ -57,10 +60,6 @@
         "title": "Cat Yoink: Test Cat Rain"
       },
       {
-        "command": "catYoink.attachWindow",
-        "title": "Cat Yoink: Attach Window Here"
-      },
-      {
         "command": "catYoink.menu",
         "title": "Cat Yoink: Menu"
       },
@@ -80,6 +79,7 @@
         "catYoink.browserPath": {
           "type": "string",
           "default": "",
+          "scope": "machine",
           "description": "Path to Edge or Chrome. Leave empty to auto-detect."
         },
         "catYoink.botName": {
@@ -117,23 +117,15 @@
           "default": true,
           "description": "Open Cat Yoink and start watching every time VS Code starts (needs a channel link)."
         },
-        "catYoink.windowMode": {
-          "type": "string",
-          "enum": [
-            "insideVSCode",
-            "floating"
-          ],
-          "enumDescriptions": [
-            "Keep the Cat Yoink window inside the VS Code window that is watching: it follows that window, stays just above it and hides while it is minimized (Windows only; elsewhere it floats).",
-            "A free window anywhere on screen, always on top of other windows."
-          ],
-          "default": "insideVSCode",
-          "description": "Where the Cat Yoink window lives."
+        "catYoink.minimizeWithVSCode": {
+          "type": "boolean",
+          "default": true,
+          "description": "Windows: hide the cat window while its VS Code window is minimized, and show it again when VS Code is restored. Cats that appear meanwhile wait until then."
         },
         "catYoink.checkForUpdates": {
           "type": "boolean",
           "default": true,
-          "description": "Once a day, check GitHub for a newer Cat Yoink release and offer its download page. Cat Yoink isn't on the Marketplace, so nothing else updates it."
+          "description": "Once a day, check GitHub for a newer Cat Yoink release and offer its download page."
         }
       }
     },
@@ -142,7 +134,7 @@
         "description": "Cat Yoink",
         "default": {
           "fontPath": "./media/cat-icons.woff",
-          "fontCharacter": "\f101"
+          "fontCharacter": "\\f101"
         }
       }
     }
@@ -151,13 +143,14 @@
     "compile": "tsc -p ./",
     "watch": "tsc -watch -p ./",
     "icons": "node scripts/build-icons.js",
-    "test-window": "node scripts/test-window.js",
     "sync-install": "node scripts/sync-install.js",
-    "vscode:prepublish": "install-electron && npm run compile",
-    "package": "vsce package --target win32-x64"
+    "build-host": "node scripts/build-host.js",
+    "test-window": "node scripts/test-window.js",
+    "postinstall": "node scripts/fetch-webview2.js",
+    "vscode:prepublish": "node scripts/fetch-webview2.js && node scripts/build-host.js && npm run compile",
+    "package": "vsce package"
   },
   "dependencies": {
-    "electron": "45.3.1",
     "puppeteer-core": "^23.11.1"
   },
   "devDependencies": {

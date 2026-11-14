@@ -1,8 +1,8 @@
 // The Cat Yoink extension itself. Loaded (and hot-reloaded) by extension.ts.
 import * as vscode from 'vscode';
 import * as path from 'path';
-import { BrowserStatus, DiscordBrowser, DiscordEvent, MinigameForm } from './discordBrowser';
-import { CatWindow, TerminalMessage, windowModeSetting } from './catWindow';
+import { appendLog, BrowserStatus, DiscordBrowser, DiscordEvent, MinigameForm } from './discordBrowser';
+import { CatWindow, minimizeWithSetting, removeOldWindowFiles, TerminalMessage, VIEW_TYPE } from './catWindow';
 import { RainCat, rainCats, rainScene, rainSet, RainScene, sceneFiles, SurfSet, surfSet } from './gifs';
 import { GifSync } from './gifSync';
 import { parseCatch, parseLateCatchers, sameName, spawnCaption, spawnTitle, spawnType, spawnWord } from './catText';
@@ -24,8 +24,9 @@ const RESULT_WAIT_MS = 15_000;
  * ended" (rain cats come 1-2 s after each catch, so this only fires when something went wrong).
  */
 const RAIN_IDLE_MS = 5 * 60_000;
-/** Show Nyan anyway if the first check of the channel (is a cat out?) takes longer than this. */
-const FIRST_CHECK_MAX_MS = 20_000;
+/** Discord's epoch (2015-01-01): message ids (snowflakes) count their milliseconds from it. */
+const DISCORD_EPOCH_MS = 1420070400000n;
+const BROWSER_LOG = 'browser.log';
 const RAIN_START_DEFAULT = 'cat rain was started|started a short rain|\\brain will start\\b|\\brain extended\\b';
 const RAIN_END_DEFAULT = 'cat rain has ended';
 
@@ -63,9 +64,6 @@ let raining = false;
 let rainTimer: NodeJS.Timeout | undefined;
 /** Cancels the running Test Rain, if any. */
 let stopTestRain: (() => void) | undefined;
-/** Watching started but the channel hasn't been checked for a cat yet; the window shows no Nyan. */
-let waiting = false;
-let waitTimer: NodeJS.Timeout | undefined;
 /** The downloaded surf and rain GIFs (src/gifSync.ts). */
 let gifSync: GifSync;
 let gifStatus: vscode.Disposable | undefined;
@@ -83,21 +81,23 @@ export function activate(context: vscode.ExtensionContext) {
     return;
   }
   adoptOldData(context); // before anything below reads the storage folder
+  removeOldWindowFiles(context.globalStorageUri.fsPath); // the Electron window of earlier versions
   lock = new OwnerLock(context.globalStorageUri.fsPath);
-  panel = new CatWindow(context.extensionPath, context.globalStorageUri.fsPath);
+  gifSync = new GifSync(context.globalStorageUri.fsPath);
+  panel = new CatWindow(context.extensionUri, vscode.Uri.file(gifSync.dir), context.globalStorageUri.fsPath);
   panel.setCount(context.globalState.get<number>('catCount', 0));
   panel.onYoink = () => void yoink();
   panel.onTerminal = (m) => void onTerminalMessage(m);
-  gifSync = new GifSync(context.globalStorageUri.fsPath);
   gifSync.onProgress = (done, total) => {
     gifStatus?.dispose();
     gifStatus =
       done < total ? vscode.window.setStatusBarMessage(`$(cloud-download) Cat Yoink: downloading cat GIFs ${done}/${total}`) : undefined;
   };
-  // Earlier versions used a VS Code floating webview; close it if VS Code restores one.
+  // VS Code restores the cat window after a restart, in the window and place the user left it.
+  // Only the window that watches shows cats: another VS Code window that is watching keeps it.
   context.subscriptions.push(
-    vscode.window.registerWebviewPanelSerializer('catYoink', {
-      deserializeWebviewPanel: async (p) => p.dispose(),
+    vscode.window.registerWebviewPanelSerializer(VIEW_TYPE, {
+      deserializeWebviewPanel: async (p) => (!browser && lock.isHeldByOther() ? p.dispose() : panel.adopt(p)),
     })
   );
 
@@ -126,18 +126,6 @@ export function activate(context: vscode.ExtensionContext) {
   });
   reg('catYoink.testTerminal', testTerminal);
   reg('catYoink.testRain', testRain);
-  reg('catYoink.attachWindow', () => {
-    if (!browser && lock.isHeldByOther()) {
-      void vscode.window.showInformationMessage('Cat Yoink is running in another VS Code window.');
-      return;
-    }
-    if (windowModeSetting() === 'floating') {
-      void vscode.window.showInformationMessage('Cat Yoink: "catYoink.windowMode" is "floating", so the window is not attached to VS Code.');
-      return;
-    }
-    panel.show();
-    panel.claimOwner(true); // the command palette just focused this window, so it is in front
-  });
   reg('catYoink.menu', menu);
   reg('catYoink.checkUpdates', () => checkForUpdates(ctx, true));
 
@@ -147,11 +135,11 @@ export function activate(context: vscode.ExtensionContext) {
       if (e.affectsConfiguration('catYoink.channelUrl') && browser) {
         void startWatching();
       }
-      if (e.affectsConfiguration('catYoink.windowMode')) {
-        void panel.setMode(windowModeSetting());
+      if (e.affectsConfiguration('catYoink.minimizeWithVSCode')) {
+        panel.setMinimizeWith(minimizeWithSetting());
       }
     }),
-    // The cat window attaches to the VS Code window that is in front when this one gets focus.
+    // The frameless window follows the VS Code window that is in front when this one gets focus.
     vscode.window.onDidChangeWindowState((s) => {
       if (s.focused) {
         panel.claimOwner();
@@ -166,13 +154,19 @@ export function activate(context: vscode.ExtensionContext) {
   void checkForUpdates(context, false); // at most once a day
 }
 
-/** Stops the browser and closes the cat window; resolves once both are gone. */
-export async function deactivate(): Promise<void> {
+/**
+ * Stops the browser; resolves once it is gone. The cat window is closed only for a hot reload (the
+ * new build opens its own): when VS Code shuts down it stays, so VS Code restores it next time.
+ */
+export async function deactivate(reloading = false): Promise<void> {
   clearBonus();
   stopTestRain?.();
   gifSync?.dispose();
   gifStatus?.dispose();
-  await Promise.all([panel?.dispose(), serial(() => shutdown())]);
+  if (reloading) {
+    panel?.dispose();
+  }
+  await serial(() => shutdown());
 }
 
 // ---------- commands ----------
@@ -210,13 +204,12 @@ function settingTarget(key: string): vscode.ConfigurationTarget {
 async function menu() {
   const running = !!browser;
   const autoStart = cfg().get<boolean>('autoStart', true);
-  const floating = windowModeSetting() === 'floating';
+  const minimizeWith = minimizeWithSetting();
   const cmd = (label: string, id: string): MenuItem => ({ label, run: () => vscode.commands.executeCommand(id) });
   const items: MenuItem[] = [
     running ? cmd('Stop watching', 'catYoink.stop') : cmd('Start watching', 'catYoink.start'),
     cmd('Log in to Discord (show browser)', 'catYoink.login'),
     cmd('Show panel', 'catYoink.showPanel'),
-    cmd('Attach window here', 'catYoink.attachWindow'),
     cmd('Set channel link', 'catYoink.setChannel'),
     cmd('Check for updates', 'catYoink.checkUpdates'),
     { label: 'Options', kind: vscode.QuickPickItemKind.Separator },
@@ -229,16 +222,23 @@ async function menu() {
         vscode.window.setStatusBarMessage(`$(cat-yoink-cat) Cat Yoink: start with VS Code ${autoStart ? 'off' : 'on'}`, 3000);
       },
     },
-    {
-      label: `$(${floating ? 'pinned' : 'window'}) Window: ${floating ? 'Always on top' : 'Inside VS Code'}`,
-      description: 'click to switch',
-      detail: floating
-        ? 'Switch to: kept inside the VS Code window, hidden while it is minimized'
-        : 'Switch to: a free window anywhere on screen, always on top',
-      // onDidChangeConfiguration restarts the window in the new mode.
-      run: () => cfg().update('windowMode', floating ? 'insideVSCode' : 'floating', settingTarget('windowMode')),
-    },
   ];
+  // Only the frameless window (Windows) can follow VS Code's minimize.
+  if (process.platform === 'win32') {
+    items.push({
+      label: `$(${minimizeWith ? 'check' : 'circle-large-outline'}) Minimize with VS Code`,
+      description: minimizeWith ? 'On' : 'Off',
+      detail: 'Hide the cat window while VS Code is minimized; it comes back with VS Code',
+      // onDidChangeConfiguration passes it on to the window.
+      run: async () => {
+        await cfg().update('minimizeWithVSCode', !minimizeWith, settingTarget('minimizeWithVSCode'));
+        vscode.window.setStatusBarMessage(
+          `$(cat-yoink-cat) Cat Yoink: minimize with VS Code ${minimizeWith ? 'off' : 'on'}`,
+          3000
+        );
+      },
+    });
+  }
   const pick = await vscode.window.showQuickPick(items, { title: 'Cat Yoink' });
   await pick?.run?.();
 }
@@ -300,51 +300,26 @@ async function replaceBrowser(channelUrl: string, forceLogin: boolean): Promise<
     rainStartText: c.get<string>('rainStartText', RAIN_START_DEFAULT),
     rainEndText: c.get<string>('rainEndText', RAIN_END_DEFAULT),
     dumpDir: path.join(storage, 'minigame-dumps'),
-    logFile: path.join(storage, 'browser.log'),
+    logFile: path.join(storage, BROWSER_LOG),
   });
   b.onEvent = (e) => void onDiscordEvent(e);
   b.onStatus = (s, d) => onBrowserStatus(b, s, d);
   browser = b;
 
+  // Nyan right away, while Discord loads. A cat that is already out surfs in once it is found.
   panel.show();
-  beginWaiting();
+  panel.idle();
   // Not awaited here: the next swap may stop this one mid-launch (stop() waits for the launch).
   return { done: b.start(forceLogin) };
 }
 
 async function stopWatching() {
   await serial(() => shutdown(true));
-  panel.idle(); // so "Show panel" later opens on Nyan, not the loading screen
+  panel.idle(); // so "Show panel" later opens on Nyan, not on the last cat
   panel.hide();
 }
 
-/** Holds off Nyan until the channel has been checked for a cat that is already out. */
-function beginWaiting() {
-  clearTimeout(waitTimer);
-  waiting = true;
-  panel.loading();
-  waitTimer = setTimeout(endWaiting, FIRST_CHECK_MAX_MS);
-}
-
-/** The first check is done (or gave up): no cat was found, so show Nyan. */
-function endWaiting() {
-  if (!waiting) {
-    return;
-  }
-  stopWaiting();
-  if (!active) {
-    panel.idle();
-  }
-}
-
-function stopWaiting() {
-  clearTimeout(waitTimer);
-  waitTimer = undefined;
-  waiting = false;
-}
-
 async function shutdown(updateStatus = true) {
-  stopWaiting();
   clearTimers();
   active = undefined;
   endRain();
@@ -372,7 +347,6 @@ function onBrowserStatus(b: DiscordBrowser, s: BrowserStatus, detail?: string) {
       setStatus('Watching');
       break;
     case 'login':
-      endWaiting(); // Nyan while the user logs in
       setStatus('Login needed');
       if (detail) {
         void vscode.window
@@ -385,7 +359,6 @@ function onBrowserStatus(b: DiscordBrowser, s: BrowserStatus, detail?: string) {
       }
       break;
     case 'error':
-      endWaiting();
       setStatus('Error');
       void vscode.window.showErrorMessage(`Cat Yoink: ${detail ?? 'unknown error'}`);
       break;
@@ -451,8 +424,6 @@ async function onDiscordEvent(e: DiscordEvent) {
       return startRain(!!e.existing);
     case 'rainEnd':
       return endRain();
-    case 'attached':
-      return endWaiting();
   }
 }
 
@@ -500,7 +471,6 @@ function armRainTimer() {
 }
 
 async function onSpawn(e: Extract<DiscordEvent, { kind: 'spawn' }>) {
-  stopWaiting(); // the cat replaces the loading screen
   clearTimers();
   const trigger = cfg().get<string>('triggerText', 'appeared!');
   const caption = spawnCaption(e.text, trigger);
@@ -512,8 +482,28 @@ async function onSpawn(e: Extract<DiscordEvent, { kind: 'spawn' }>) {
   const word = spawnWord(caption, trigger);
   const surf = surfNow(word);
   const rain = rainNow(word);
-  panel.spawn(e.id, spawnTitle(type), surf, rain, !!e.existing);
+  // A cat that was already out when watching started comes in like any other: Nyan is on screen.
+  panel.spawn(e.id, spawnTitle(type), surf, rain);
   fetchLateGifs(e.id, word, surf, rain);
+  if (!e.existing) {
+    logSpawnDelay(e.id); // after the window was told, so the log never holds the cat up
+  }
+}
+
+/**
+ * Notes in browser.log how long after Discord created the spawn message we saw it. `liId` ends in
+ * the message's id, a snowflake that starts with its creation time. Only as exact as this PC's clock.
+ */
+function logSpawnDelay(liId: string) {
+  const messageId = liId.split('-').pop() ?? '';
+  if (!/^\d+$/.test(messageId)) {
+    return;
+  }
+  const created = Number((BigInt(messageId) >> 22n) + DISCORD_EPOCH_MS);
+  appendLog(
+    path.join(ctx.globalStorageUri.fsPath, BROWSER_LOG),
+    `spawn seen ${Date.now() - created} ms after Discord's timestamp`
+  );
 }
 
 // ---------- GIFs ----------
@@ -827,7 +817,8 @@ function testRain() {
   const pick = () => names[Math.floor(Math.random() * names.length)];
   // Every clip is 2.5 s, so a cat needs ~9 s out to be seen looping between its enter and exit.
   // After each catch, the next cat comes 1.5 s later (a cat waiting as the exit ends walks straight
-  // in), except once: a 7 s gap that leaves the empty storm on screen.
+  // in), except once: a 7 s gap that leaves the empty storm on screen. That second cat is caught by
+  // someone else, so its "Too slow!" stays readable over the storm.
   const gaps = [1_500, 7_000, 1_500];
   const stamp = Date.now();
   panel.rain(scene);
@@ -839,7 +830,11 @@ function testRain() {
       panel.spawn(`test-rain-${stamp}-${i}`, spawnTitle(`${name} cat`), surfNow(word), rainNow(word))
     );
     t += 9_000;
-    later(t, () => panel.result(`${name} cat Yoinked! (test)`, true));
+    later(t, () =>
+      i === 1
+        ? panel.tooSlow(`Someone caught the ${name} cat. (test)`)
+        : panel.result(`${name} cat Yoinked! (test)`, true)
+    );
     t += gap;
   });
   later(t, () => {

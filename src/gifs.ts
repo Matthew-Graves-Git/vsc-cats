@@ -1,12 +1,11 @@
 import * as fs from 'fs';
 import * as path from 'path';
-import { pathToFileURL } from 'url';
 
 // The surf and rain clips live in a gif folder laid out like the repo's media/gifs (the extension
-// uses its download cache, src/gifSync.ts; the scripted test run uses the repo's own copy). Each
-// clip is handed to the window as an absolute file: URL. idle.gif (Nyan) is bundled in media/.
+// uses its download cache, src/gifSync.ts; a local media/gifs is the fallback). Each clip is an
+// absolute file path; src/catWindow.ts turns it into a webview URL. idle.gif (Nyan) is bundled in media/.
 
-/** The GIFs for one surfing cat. Clips are file: URLs. */
+/** The GIFs for one surfing cat. Clips are absolute file paths. */
 export interface SurfSet {
   key: string;
   /** Nyan exits, the cat surfs in. Starts on idle.gif's last frame. Shown once. */
@@ -95,7 +94,7 @@ export function primeDuration(file: string, ms: number): void {
   }
 }
 
-/** The GIFs for one cat during a cat rain. Clips are file: URLs. */
+/** The GIFs for one cat during a cat rain. Clips are absolute file paths. */
 export interface RainCat {
   /** The cat walks in from the right. Starts on rain_no_cat's first frame, ends on `loop`'s first frame. Shown once. */
   enter: string;
@@ -108,7 +107,7 @@ export interface RainCat {
   exitMs: number;
 }
 
-/** The storm clips every cat rain shares. Clips are file: URLs. */
+/** The storm clips every cat rain shares. Clips are absolute file paths. */
 export interface RainScene {
   /** Nyan leaves, the rain starts. Starts on idle.gif's last frame, ends on `empty`'s first frame. Shown once. */
   start: string;
@@ -193,11 +192,11 @@ function lookup(gifDir: string, kind: 'surf' | 'rain', word: string): string | u
 const defaultDir = (extensionPath: string) => path.join(extensionPath, 'media', 'gifs');
 const nyanMs = (extensionPath: string) => gifDurationMs(path.join(extensionPath, 'media', 'idle.gif'));
 
-/** Each clip's file: URL and length, or undefined if any is missing (a missing file reads as 0ms). */
-function clips(gifDir: string, rels: string[]): { url: string; ms: number }[] | undefined {
+/** Each clip's absolute path and length, or undefined if any is missing (a missing file reads as 0ms). */
+function clips(gifDir: string, rels: string[]): { file: string; ms: number }[] | undefined {
   const out = rels.map((rel) => {
     const abs = path.join(gifDir, rel);
-    return { url: pathToFileURL(abs).href, ms: gifDurationMs(abs) };
+    return { file: abs, ms: gifDurationMs(abs) };
   });
   return out.every((c) => c.ms) ? out : undefined;
 }
@@ -224,7 +223,7 @@ export function rainSet(
     return undefined;
   }
   const [enter, loop, exit] = c;
-  return { enter: enter.url, loop: loop.url, exit: exit.url, enterMs: enter.ms, loopMs: loop.ms, exitMs: exit.ms };
+  return { enter: enter.file, loop: loop.file, exit: exit.file, enterMs: enter.ms, loopMs: loop.ms, exitMs: exit.ms };
 }
 
 /** The shared cat rain clips, or undefined if any is missing (then rain looks like any other time). */
@@ -236,9 +235,9 @@ export function rainScene(extensionPath: string, gifDir = defaultDir(extensionPa
   }
   const [start, empty, clear] = c;
   return {
-    start: start.url,
-    empty: empty.url,
-    clear: clear.url,
+    start: start.file,
+    empty: empty.file,
+    clear: clear.file,
     startMs: start.ms,
     emptyMs: empty.ms,
     clearMs: clear.ms,
@@ -264,9 +263,9 @@ export function surfSet(
   const [surf, loop, ret] = c;
   return {
     key: prefix.toLowerCase(),
-    surf: surf.url,
-    loop: loop.url,
-    ret: ret.url,
+    surf: surf.file,
+    loop: loop.file,
+    ret: ret.file,
     surfMs: surf.ms,
     loopMs: loop.ms,
     retMs: ret.ms,

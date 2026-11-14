@@ -10,7 +10,8 @@ import * as path from 'path';
 
 interface Core {
   activate(context: vscode.ExtensionContext): void;
-  deactivate(): Promise<void>;
+  /** `reloading`: a new build is about to start (hot reload), not VS Code shutting down. */
+  deactivate(reloading?: boolean): Promise<void>;
 }
 
 let context: vscode.ExtensionContext;
@@ -79,11 +80,11 @@ function load() {
   }
 }
 
-async function unload() {
+async function unload(reloading = false) {
   const c = core;
   core = undefined;
   try {
-    await c?.deactivate();
+    await c?.deactivate(reloading);
   } catch {
     // keep going: the new build should still get a chance
   }
@@ -101,7 +102,7 @@ function reload(): Promise<void> {
     return reloading;
   }
   reloading = (async () => {
-    await unload();
+    await unload(true);
     // Forget every compiled module of ours except this loader, so require() reads the new files.
     const norm = (p: string) => (process.platform === 'win32' ? p.toLowerCase() : p);
     const outDir = norm(path.join(context.extensionPath, 'out') + path.sep);

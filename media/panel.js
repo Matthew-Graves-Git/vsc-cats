@@ -1,5 +1,5 @@
 (function () {
-  // Provided by window/preload.js.
+  // Provided by host.js.
   const host = window.catYoink;
   const stage = document.getElementById('stage');
   const close = document.getElementById('close');
@@ -46,8 +46,9 @@
   // boundary. If it still isn't ready: a loop plays one more cycle; a one-shot clip plays once and
   // holds its last frame (the next clip's first; scripts/fix-gif-loops.js), so it just waits.
   //
-  // Before any of that, 'boot': nothing on screen until the extension says whether a cat is already
-  // out (spawn with skipIntro: straight to its loop) or not (idle: Nyan).
+  // Before any of that, 'boot': nothing on screen until the extension's first message, which it
+  // sends as soon as this page says ready. Normally that is idle (Nyan); a page that starts while a
+  // cat is out gets spawn with skipIntro (straight to its loop).
 
   const NYAN = 'idle.gif';
   const LEAD = 600; // how long before a handoff the next clip starts loading (clips are >= 1.68 s)
@@ -80,13 +81,16 @@
     }
     const img = new Image();
     const p = { src, url: `${src}?t=${Date.now()}-${++seq}`, img, done: false };
+    p.ready = new Promise((resolve) => {
+      img.decode().then(resolve, resolve); // a clip that won't decode must not stall the sequence
+      // A hidden page doesn't decode until it is shown again (the frameless window starts hidden
+      // and waits for its first GIF). Nothing is on screen to keep smooth then, so loaded will do.
+      img.addEventListener('load', () => document.hidden && resolve());
+      img.addEventListener('error', resolve);
+    }).then(() => {
+      p.done = true;
+    });
     img.src = p.url;
-    p.ready = img
-      .decode()
-      .catch(() => {}) // a clip that won't decode must not stall the sequence
-      .then(() => {
-        p.done = true;
-      });
     pending = p;
     return p;
   }
@@ -125,8 +129,8 @@
     show(preload(src), nextPhase, apply);
   }
 
-  // The window stays hidden (window/main.js) until the first GIF is on the <img>; an error counts
-  // too, so a missing file can't keep it hidden forever.
+  // The frameless window (window/host.cs) stays hidden until the first GIF is on the <img>; an
+  // error counts too, so a missing file can't keep it hidden forever. A VS Code webview ignores it.
   let sceneShown = false;
   const firstScene = () => {
     if (!sceneShown) {
@@ -306,60 +310,69 @@
     host.send({ type: 'yoink' });
   });
 
+  // Closes the window (src/catWindow.ts, or hides the frameless one); watching continues and the
+  // next cat reopens it.
   close.addEventListener('click', () => host.send({ type: 'close' }));
 
-  // ---- window dragging ----
+  // ---- frameless window: dragging and resizing ----
   //
-  // Pressing the picture (or the terminal's title bar) moves the window: window/main.js follows the
-  // cursor until we say the drag ended. Not a -webkit-app-region drag: that uses Windows' move
-  // loop, and its Aero Shake minimizes VS Code when the cat is held against VS Code's edge.
+  // Pressing the picture (or the terminal's title bar) moves the window; pressing one of the edge
+  // zones resizes it. window/host.cs follows the cursor until we say the press ended. Not a
+  // -webkit-app-region drag: that uses Windows' move loop, whose Aero Shake minimizes every other
+  // window when the cat is held against a screen edge.
 
-  let dragging = false;
+  if (host.native) {
+    let dragging = false;
 
-  function endDrag() {
-    if (dragging) {
-      dragging = false;
-      host.send({ type: 'dragEnd' });
-    }
+    const endDrag = () => {
+      if (dragging) {
+        dragging = false;
+        host.send({ type: 'dragEnd' });
+      }
+    };
+
+    stage.addEventListener('pointerdown', (e) => {
+      if (e.button !== 0 || e.target.closest('button, textarea, input')) {
+        return;
+      }
+      const edge = e.target.closest('[data-edge]');
+      if (!edge && !e.target.closest('.drag, .term-bar')) {
+        return;
+      }
+      e.preventDefault(); // no text selection while dragging
+      e.target.setPointerCapture(e.pointerId); // the release still reaches us if the cursor left the window
+      dragging = true;
+      host.send(edge ? { type: 'dragStart', edge: edge.dataset.edge } : { type: 'dragStart' });
+    });
+    stage.addEventListener('pointerup', endDrag);
+    stage.addEventListener('pointercancel', endDrag);
+    stage.addEventListener('lostpointercapture', endDrag);
+    stage.addEventListener('pointermove', (e) => {
+      if (dragging && e.buttons === 0) {
+        endDrag(); // the release went missing
+      }
+    });
+    window.addEventListener('blur', endDrag);
   }
-
-  stage.addEventListener('pointerdown', (e) => {
-    if (e.button !== 0 || !e.target.closest('.drag, .term-bar') || e.target.closest('button, textarea, input')) {
-      return;
-    }
-    e.preventDefault(); // no text selection while dragging
-    e.target.setPointerCapture(e.pointerId); // the release still reaches us if the cursor left the window
-    dragging = true;
-    host.send({ type: 'dragStart' });
-  });
-  stage.addEventListener('pointerup', endDrag);
-  stage.addEventListener('pointercancel', endDrag);
-  stage.addEventListener('lostpointercapture', endDrag);
-  stage.addEventListener('pointermove', (e) => {
-    if (dragging && e.buttons === 0) {
-      endDrag(); // the release went missing
-    }
-  });
-  window.addEventListener('blur', endDrag);
 
   window.addEventListener('message', (event) => {
     const m = event.data;
+    if (!m || typeof m.type !== 'string') {
+      return;
+    }
     switch (m.type) {
       case 'count':
         countEl.textContent = String(m.count);
         catsWord.textContent = m.count === 1 ? 'Cat' : 'Cats';
         break;
       case 'idle':
-      case 'loading': // like idle, but stays on the blank boot screen until the channel is checked
         busy = false;
         pendingSpawn = false;
         status.textContent = '';
         setState('idle');
         stage.classList.remove('has-cat'); // back to "Yoinked N Cats"
         setTarget(null);
-        if (m.type === 'idle') {
-          leaveBoot();
-        }
+        leaveBoot();
         break;
       case 'spawn': {
         busy = false;
@@ -373,7 +386,7 @@
         const spawn = { id: m.id, surf: m.surf, rain: m.rain };
         const gifs = raining ? m.rain : m.surf;
         if (m.skipIntro && gifs && !showing) {
-          // The cat was already there when Cat Yoink started: straight to its loop, no intro
+          // The cat was already out when this page started: straight to its loop, no intro
           // (revealed when that loop is put on screen).
           target = showing = spawn;
           play(gifs.loop, raining ? 'rainLoop' : 'loop');
@@ -428,9 +441,6 @@
         revealSpawn();
         yoink.disabled = true;
         status.textContent = m.text;
-        break;
-      case 'hover':
-        stage.classList.toggle('hovered', !!m.inside);
         break;
       case 'term':
         if (window.catTerminal) {

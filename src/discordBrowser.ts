@@ -6,7 +6,7 @@ import puppeteer, { Browser, ElementHandle, Page } from 'puppeteer-core';
 export type BrowserStatus = 'starting' | 'watching' | 'login' | 'error' | 'stopped';
 
 export type DiscordEvent =
-  /** `existing`: the cat was already in the channel when watching started (not a new spawn). */
+  /** `existing`: the cat was already in the channel when we attached (not a new spawn). */
   | { kind: 'spawn'; id: string; text: string; existing?: boolean }
   /** `firstAuthor`: display name on the earliest "cat" reply since the spawn (whoever Cat Bot saw first). */
   | { kind: 'caught'; text: string; firstAuthor?: string }
@@ -25,12 +25,7 @@ export type DiscordEvent =
    */
   | { kind: 'rainStart'; existing?: boolean }
   /** Cat Bot's "cat rain has ended" (or, when we attached, the newest rain message was one). */
-  | { kind: 'rainEnd' }
-  /**
-   * The channel was scanned (on start, and again whenever Discord re-renders the list). A rain or
-   * cat already there was emitted just before this.
-   */
-  | { kind: 'attached' };
+  | { kind: 'rainEnd' };
 
 /** The question in Cat Bot's minigame modal, as scraped from Discord. */
 export interface MinigameForm {
@@ -124,8 +119,51 @@ async function waitForProfileFree(profileDir: string, ms: number): Promise<boole
   return true;
 }
 
+/**
+ * What a browser keeps in its data folder that we don't need, by name. Edge's downloaded components
+ * (an image-recognition model, video DRM, ad-block lists, shopping and wallet data...: over 450 MB
+ * in the Discord profile), which don't come back once it runs with --disable-component-update, and
+ * metrics and crash files. The login is never on these lists: it is Local State (which holds the
+ * cookie key) and Default's Network, Local Storage and IndexedDB.
+ */
+const COMPONENTS = /^(component_crx_cache|extensions_crx_cache|Provenance\w*|WidevineCdm|Subresource Filter|Speech Recognition|hyphen-data|ZxcvbnData|Typosquatting|Edge.*|BrowserMetrics.*|Crashpad)$/;
+/** Caches, rebuilt on demand: in the data folder, and in Default. */
+const CACHES = /^(GrShaderCache|ShaderCache|GPUPersistentCache)$/;
+const PROFILE_CACHES = /^(Cache|Code Cache|GPUCache|Dawn\w*Cache|EdgeCoupons)$/;
+
+/**
+ * --disk-cache-size for Discord, which limits its Cache and Code Cache during a session (both are
+ * deleted at each launch, so they only ever hold one session). With 4 MB, loading Discord left
+ * about 12 MB in Cache and 1 MB in Code Cache, against 17 MB and 20 MB without a limit.
+ */
+const DISK_CACHE_BYTES = 4 * 1024 * 1024;
+
+/**
+ * The COMPONENTS (and with `caches`, the CACHES) in a browser data folder, for the caller to delete
+ * before a browser starts on it. None while a browser has the folder open: deleting under it could
+ * break it.
+ */
+export function browserJunk(dataDir: string, caches: boolean): string[] {
+  if (profileInUse(dataDir)) {
+    return [];
+  }
+  const matching = (dir: string, re: RegExp) => {
+    try {
+      return fs.readdirSync(dir).filter((n) => re.test(n)).map((n) => path.join(dir, n));
+    } catch {
+      return []; // not created yet
+    }
+  };
+  return [
+    ...matching(dataDir, COMPONENTS),
+    ...(caches ? [...matching(dataDir, CACHES), ...matching(path.join(dataDir, 'Default'), PROFILE_CACHES)] : []),
+  ];
+}
+
 const TEXTBOX = 'div[role="textbox"][data-slate-editor="true"]';
 const MINIGAME_MS = 45_000;
+/** Discord's notice on every bot modal ("Warning: This form will be submitted to…"), not part of the question. */
+const MODAL_NOTICE = /(?:warning:?\s*)?this form will be submitted to[\s\S]*?sensitive information\.?/i;
 
 export function detectBrowser(configured: string): string | undefined {
   if (configured && fs.existsSync(configured)) {
@@ -335,13 +373,16 @@ export class DiscordBrowser {
       options = await this.readSelectOptions();
     }
     const cleanPrompt = scraped.prompt
+      .replace(MODAL_NOTICE, '')
       .split('\n')
       .map((l) => l.trim())
       .filter(
         (l) =>
           l &&
           l !== scraped.title &&
-          !/^(answer|cancel|submit|\*)$/i.test(l) &&
+          // "Answer*" is the answer box's label (with its required marker); a lone "," is a
+          // screen-reader separator Discord puts between parts (see linesOf in observerScript).
+          !/^(?:(?:answer|cancel|submit)\s*\*?|\*|,)$/i.test(l) &&
           !/^time'?s up/i.test(l) &&
           !l.startsWith('-#') &&
           l.toLowerCase() !== this.opts.botName.toLowerCase() &&
@@ -376,19 +417,7 @@ export class DiscordBrowser {
       await page.keyboard.press('Backspace');
       await page.keyboard.type(answer);
     } else if (kind === 'radio') {
-      const ok = await page.evaluate((label: string) => {
-        const dialogs = Array.from(document.querySelectorAll('[role="dialog"]'));
-        for (const d of dialogs.reverse()) {
-          for (const r of Array.from(d.querySelectorAll<HTMLElement>('[role="radio"]'))) {
-            const text = (r.getAttribute('aria-label') || r.innerText || '').trim();
-            if (text === label) {
-              r.click();
-              return true;
-            }
-          }
-        }
-        return false;
-      }, answer);
+      const ok = await page.evaluate(modalScript, 'pick', answer);
       if (!ok) {
         throw new Error(`No option "${answer}".`);
       }
@@ -581,6 +610,11 @@ export class DiscordBrowser {
         '--disable-backgrounding-occluded-windows',
         '--no-first-run',
         '--no-default-browser-check',
+        // Keep the profile small (see COMPONENTS): no component downloads, a capped disk cache, and
+        // no GPU shader cache (it is headless except while the user logs in).
+        '--disable-component-update',
+        `--disk-cache-size=${DISK_CACHE_BYTES}`,
+        '--disable-gpu-shader-disk-cache',
         ...(headless ? [] : ['--window-size=1100,800']),
       ],
       ignoreDefaultArgs: ['--enable-automation'],
@@ -588,6 +622,7 @@ export class DiscordBrowser {
     const profile = this.opts.profileDir;
     // A browser left over from a crashed VS Code window would block this launch.
     await killStaleBrowsers(profile).catch(() => 0);
+    await Promise.all(browserJunk(profile, true).map((p) => fs.promises.rm(p, { recursive: true, force: true }).catch(() => {})));
     try {
       this.browser = await this.openBrowser(options);
     } catch (e: any) {
@@ -770,9 +805,28 @@ export function modalClosed(): boolean {
  * Runs inside the Discord page: finds Cat Bot's minigame modal (the newest dialog with a Submit
  * button) and does one thing with it. Self-contained so it can be passed to page.evaluate.
  */
-export function modalScript(action: string): unknown {
-  // action: 'exists' | 'scrape' | 'kind' | 'submit' | 'cancel' | 'error'
+export function modalScript(action: string, arg?: string): unknown {
+  // action: 'exists' | 'scrape' | 'kind' | 'submit' | 'cancel' | 'error' | 'pick' (arg = option label)
   const textOf = (el: Element) => ((el as HTMLElement).innerText || el.textContent || '').trim();
+  // Discord's radio groups are native <input type="radio"> inside a <label>, labelled via aria-labelledby.
+  const radioLabel = (el: Element): string => {
+    const aria = el.getAttribute('aria-label');
+    if (aria && aria.trim()) {
+      return aria.trim();
+    }
+    const ids = (el.getAttribute('aria-labelledby') || '').split(/\s+/).filter(Boolean);
+    const byId = ids
+      .map((id) => document.getElementById(id))
+      .filter((x): x is HTMLElement => !!x)
+      .map(textOf)
+      .join(' ')
+      .trim();
+    if (byId) {
+      return byId;
+    }
+    const label = el.closest('label');
+    return label ? textOf(label) : textOf(el);
+  };
   const dialogs = Array.from(document.querySelectorAll('[role="dialog"]')).reverse();
   const d = dialogs.find((x) => Array.from(x.querySelectorAll('button')).some((b) => /submit/i.test(textOf(b))));
   if (action === 'exists') {
@@ -785,7 +839,9 @@ export function modalScript(action: string): unknown {
   const field = d.querySelector<HTMLInputElement | HTMLTextAreaElement>(
     'textarea, input[type="text"], input:not([type])'
   );
-  const radios = Array.from(d.querySelectorAll('[role="radio"]'));
+  const radios = Array.from(d.querySelectorAll('[role="radio"], input[type="radio"]')).filter(
+    (r) => !r.parentElement?.closest('[role="radio"]') // an input inside a role="radio" wrapper is the same option
+  );
   const combo = d.querySelector('[role="combobox"], [aria-haspopup="listbox"]');
   const kind: 'text' | 'radio' | 'select' = radios.length ? 'radio' : combo && !field ? 'select' : 'text';
 
@@ -806,6 +862,18 @@ export function modalScript(action: string): unknown {
       const err = d.querySelector('[class*="error"], [role="alert"]');
       return err ? textOf(err) : null;
     }
+    case 'pick': {
+      const r = radios.find((x) => radioLabel(x) === arg) as HTMLElement | undefined;
+      if (!r) {
+        return false;
+      }
+      const isChecked = () => (r as HTMLInputElement).checked === true || r.getAttribute('aria-checked') === 'true';
+      ((r.closest('label') as HTMLElement | null) ?? r).click();
+      if (!isChecked()) {
+        r.click();
+      }
+      return true;
+    }
   }
   const heading = d.querySelector('h1, h2, [class*="title"]');
   const num = (v: string | null) => (v && /^\d+$/.test(v) ? Number(v) : undefined);
@@ -815,7 +883,7 @@ export function modalScript(action: string): unknown {
     kind,
     options:
       kind === 'radio'
-        ? radios.map((r) => (r.getAttribute('aria-label') || textOf(r)).trim()).filter(Boolean)
+        ? radios.map(radioLabel).filter(Boolean)
         : undefined,
     multiline: field?.tagName === 'TEXTAREA',
     minLength: num(field?.getAttribute('minlength') ?? null),
@@ -910,12 +978,26 @@ export function observerScript(cfg: {
       .join(' ')
       .trim();
 
+  /**
+   * innerText without the lone "," lines: Components V2 messages put a screen-reader separator
+   * (<span class="hiddenVisually_…">,</span>) between their parts. It is clipped, not hidden, and
+   * absolutely positioned, so innerText keeps it as a line of its own.
+   */
+  const cleanLines = (text: string): string =>
+    text
+      .split('\n')
+      .filter((l) => !/^\s*,\s*$/.test(l))
+      .join('\n')
+      .trim();
+
   /** Like textOf, but with line breaks (innerText). */
   const linesOf = (li: Element): string =>
-    [partOf(li, 'content'), partOf(li, 'accessories')]
-      .map((n) => ((n as HTMLElement | null)?.innerText ?? '').trim())
-      .filter(Boolean)
-      .join('\n');
+    cleanLines(
+      [partOf(li, 'content'), partOf(li, 'accessories')]
+        .map((n) => ((n as HTMLElement | null)?.innerText ?? '').trim())
+        .filter(Boolean)
+        .join('\n')
+    );
 
   /** Discord marks messages that ping the logged-in user. */
   const mentionsMe = (li: Element): boolean =>
@@ -929,7 +1011,7 @@ export function observerScript(cfg: {
     }
   };
   let lastSpawn: bigint | null = null;
-  /** The spawn that was already on screen when we attached; it skips the surf-in intro. */
+  /** The spawn that was already in the channel when we attached. */
   let existingId = '';
 
   /** Display name on the earliest "cat" reply after the latest spawn, i.e. who Cat Bot saw first. */
@@ -1123,7 +1205,6 @@ export function observerScript(cfg: {
     if (pending) {
       handle(pending);
     }
-    emit({ kind: 'attached' });
     return true;
   };
 

@@ -1,6 +1,6 @@
-// Cat Yoink is shared as a .vsix on GitHub Releases, not through the Marketplace, so nothing
-// updates it. Once a day this asks GitHub for the latest release and, if it is newer than this
-// build, offers its download page. Nothing is downloaded or installed here.
+// A copy of Cat Yoink installed from a .vsix (GitHub Releases) is not updated by VS Code. Once a
+// day this asks GitHub for the latest release and, if it is newer than this build, offers its
+// download page. Nothing is downloaded or installed here.
 import * as vscode from 'vscode';
 
 const LATEST_URL = 'https://api.github.com/repos/Matthew-Graves-Git/vsc-cats/releases/latest';

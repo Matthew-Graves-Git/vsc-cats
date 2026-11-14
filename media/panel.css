@@ -61,14 +61,30 @@ html, body {
   image-rendering: pixelated;
 }
 
-/* ---- window dragging: press anywhere except the outer 6px (which resizes) and drag. panel.js
-   and window/main.js move the window themselves; a -webkit-app-region drag would use Windows' move
-   loop, whose Aero Shake minimizes VS Code when the cat is held against VS Code's edge. ---- */
-.drag {
+/* ---- frameless window (html.native, window/host.cs): press anywhere to drag it, or the outer 6px
+   to resize it. panel.js says when the press starts and ends and the host moves the window; a
+   -webkit-app-region drag would use Windows' move loop, whose Aero Shake minimizes other windows. ---- */
+.drag,
+.edges { display: none; }
+html.native .drag {
+  display: block;
   position: absolute;
   inset: 6px;
   z-index: 4;
 }
+html.native .edges { display: block; }
+.edges i {
+  position: absolute;
+  z-index: 40; /* above the minigame terminal, which keeps an 8px margin anyway */
+}
+.edges [data-edge="n"]  { top: 0; left: 12px; right: 12px; height: 6px; cursor: ns-resize; }
+.edges [data-edge="s"]  { bottom: 0; left: 12px; right: 12px; height: 6px; cursor: ns-resize; }
+.edges [data-edge="e"]  { right: 0; top: 12px; bottom: 12px; width: 6px; cursor: ew-resize; }
+.edges [data-edge="w"]  { left: 0; top: 12px; bottom: 12px; width: 6px; cursor: ew-resize; }
+.edges [data-edge="ne"] { top: 0; right: 0; width: 12px; height: 12px; cursor: nesw-resize; }
+.edges [data-edge="sw"] { bottom: 0; left: 0; width: 12px; height: 12px; cursor: nesw-resize; }
+.edges [data-edge="nw"] { top: 0; left: 0; width: 12px; height: 12px; cursor: nwse-resize; }
+.edges [data-edge="se"] { bottom: 0; right: 0; width: 12px; height: 12px; cursor: nwse-resize; }
 
 /* ---- overlays: text sits straight on the picture, readable thanks to its pixel outline ---- */
 .top,
@@ -82,7 +98,7 @@ html, body {
   padding: 8px;
   z-index: 5;
   text-shadow: var(--outline);
-  pointer-events: none; /* let drags through to .drag */
+  pointer-events: none; /* only the buttons inside take clicks; drags go through to .drag */
 }
 
 .top {
@@ -196,9 +212,9 @@ html, body {
   text-shadow: 1px 1px 0 var(--ink);
   box-shadow: inset -2px -2px 0 var(--red-lo), inset 2px 2px 0 var(--red-hi), var(--edge);
   cursor: pointer;
-  visibility: hidden; /* shown only while the cursor is over the window (see window/main.js) */
+  visibility: hidden; /* shown only while the cursor is over the window */
 }
-.stage.hovered .close,
+.stage:hover .close,
 .close:focus-visible { visibility: visible; }
 .close:hover { background: var(--red-hover); }
 .close:active {

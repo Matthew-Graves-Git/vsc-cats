@@ -1,41 +1,31 @@
 import * as vscode from 'vscode';
-import * as cp from 'child_process';
+import * as crypto from 'crypto';
 import * as fs from 'fs';
-import * as net from 'net';
-import * as os from 'os';
 import * as path from 'path';
 import type { RainCat, RainScene, SurfSet } from './gifs';
-import { appendLog, run } from './discordBrowser';
 import type { MinigameForm } from './discordBrowser';
+import { appendLog } from './discordBrowser';
+import { NativeSurface, nativeUnavailable, WINDOW_LOG } from './nativeWindow';
+import { mapClipUrls, renderPanel, Surface, SurfaceEvents } from './surface';
 
-/** A window that dies this soon after launch, before saying "ready", is reported as a failed start. */
-const EARLY_EXIT_MS = 5000;
-const LOG_LINES = 200;
+/** The webview panel's type; core.ts registers a serializer for it so VS Code restores the window. */
+export const VIEW_TYPE = 'catYoink';
 
-/**
- * Windows only: ends Cat Yoink windows left behind by an earlier build or a crashed extension
- * host. Only windows of this extension whose parent is this extension host (a previous core after
- * a hot reload) or no longer exists are killed; windows owned by other live VS Code windows stay.
- */
-async function killStaleWindows(extensionPath: string): Promise<void> {
-  if (process.platform !== 'win32') {
-    return;
-  }
-  const needle = path.join(extensionPath, 'window', 'main.js').toLowerCase().replace(/'/g, "''");
-  const script =
-    `$all = @(Get-CimInstance Win32_Process); $ids = @{}; $all | ForEach-Object { $ids[[int]$_.ProcessId] = 1 }; ` +
-    `$all | Where-Object { $_.Name -eq 'electron.exe' -and $_.CommandLine -and $_.CommandLine -notmatch '--type=' -and ` +
-    `$_.CommandLine.ToLower().Contains('${needle}') -and ` +
-    `($_.ParentProcessId -eq ${process.pid} -or -not $ids.ContainsKey([int]$_.ParentProcessId)) } | ` +
-    `ForEach-Object { $_.ProcessId }`;
-  const out = await run('powershell.exe', [
-    '-NoProfile',
-    '-NonInteractive',
-    '-Command',
-    script,
-  ]);
-  for (const pid of out.split(/\s+/).map(Number).filter((n) => Number.isInteger(n) && n > 0)) {
-    await run('taskkill.exe', ['/PID', String(pid), '/T', '/F']);
+const MOVE_TO_NEW_WINDOW = 'workbench.action.moveEditorToNewWindow';
+/** VS Code 1.100+: floating windows can be compact (less chrome) and always on top. */
+const COMPACT = 'workbench.action.enableCompactAuxiliaryWindow';
+const ALWAYS_ON_TOP = 'workbench.action.enableWindowAlwaysOnTop';
+
+/** The frameless window closing by itself this often in a session switches to VS Code's floating window. */
+const MAX_CRASHES = 3;
+
+/** What the Electron cat window of earlier versions left in the storage folder (window.log is reused). */
+const OLD_WINDOW_FILES = ['window-profile', 'window.json', 'window-owner.json'];
+
+/** Deletes what the Electron cat window of earlier versions left in the storage folder. Best effort. */
+export function removeOldWindowFiles(storageDir: string): void {
+  for (const name of OLD_WINDOW_FILES) {
+    void fs.promises.rm(path.join(storageDir, name), { recursive: true, force: true }).catch(() => {});
   }
 }
 
@@ -50,11 +40,10 @@ export type TerminalMessage =
 
 export type PanelMessage =
   | { type: 'idle' }
-  /** Watching just started: no cat, and no Nyan yet either until we know whether a cat is out. */
-  | { type: 'loading' }
   /**
    * `id`: the spawn message's id, so two cats of the same type in a row are told apart.
-   * `skipIntro`: the cat was already there, so show its loop right away (no surf-in / rain enter).
+   * `skipIntro`: for a page that starts while the cat is out, so it shows the cat's loop right
+   * away (no surf-in / rain enter).
    */
   | { type: 'spawn'; id: string; title: string; surf?: SurfSet; rain?: RainCat; skipIntro?: boolean }
   /** Clips for spawn `id` that finished downloading after it appeared: it animates in at the next loop. */
@@ -70,89 +59,79 @@ export type PanelMessage =
   | { type: 'count'; count: number }
   | { type: 'term'; msg: TerminalMessage };
 
-/** `catYoink.windowMode`: inside the watching VS Code window (Windows only), or free-floating. */
-export type WindowMode = 'insideVSCode' | 'floating';
-
-export function windowModeSetting(): WindowMode {
-  return vscode.workspace.getConfiguration('catYoink').get<string>('windowMode') === 'floating'
-    ? 'floating'
-    : 'insideVSCode';
+/** `catYoink.minimizeWithVSCode`: the frameless window hides while its VS Code window is minimized. */
+export function minimizeWithSetting(): boolean {
+  return vscode.workspace.getConfiguration('catYoink').get<boolean>('minimizeWithVSCode', true);
 }
 
 /**
- * The Cat Yoink window: a frameless Electron window (window/main.js) that shows the Nyan /
- * surfing-cat GIFs and the Yoink button. By default it lives inside this VS Code window (it
- * follows it, stays stacked just above it and hides while it is minimized); in floating mode it
- * is a free always-on-top window. It remembers its own position and size. We talk to it over a
- * named pipe with JSON lines.
+ * The Cat Yoink window: media/panel.html, which shows the Nyan / surfing-cat GIFs and the Yoink
+ * button. It keeps what the page shows and replays it whenever a page starts (says `ready`); the
+ * page itself lives on a Surface: on Windows the frameless window (src/nativeWindow.ts), kept on
+ * top; elsewhere, or if that can't start, a VS Code webview moved into its own VS Code window.
  */
 export class CatWindow {
-  private proc?: cp.ChildProcess;
-  private server?: net.Server;
-  private sock?: net.Socket;
-  private outbox: string[] = [];
+  private surface?: Surface;
   private ready = false;
   private queue: PanelMessage[] = [];
   private last: PanelMessage = { type: 'idle' };
-  /** The rain message while a cat rain is on, replayed (before `last`) to a fresh window. */
+  /** The rain message while a cat rain is on, replayed (before `last`) to a fresh page. */
   private rainMsg?: Extract<PanelMessage, { type: 'rain' }>;
   private count = 0;
-  private mode: WindowMode = windowModeSetting();
+  private minimizeWith = minimizeWithSetting();
   /** We asked for the window to be shown and the user hasn't closed it since. */
   private wanted = false;
-  private errorShown = false;
-  /** True while stale windows are being cleaned up, before the new window is spawned. */
-  private launching = false;
-  /** Bumped by dispose() so a launch that was still cleaning up doesn't spawn afterwards. */
-  private generation = 0;
+  /** Why the frameless window isn't used this session (VS Code's floating window is used then). */
+  private nativeOff?: string;
+  private crashes = 0;
+  private warned = false;
 
   onYoink: () => void = () => {};
   /** Messages from the minigame terminal: mgGo, mgAnswer { answer }, mgClose. */
   onTerminal: (m: { type: string; answer?: unknown }) => void = () => {};
 
-  constructor(private extensionPath: string, private storageDir: string) {}
+  /** `gifDir`: the downloaded surf and rain GIFs (src/gifSync.ts), which the page may load. */
+  constructor(private extensionUri: vscode.Uri, private gifDir: vscode.Uri, private storageDir: string) {}
 
-  /** Shows the window (starting it if needed) without taking focus. */
+  /** Shows the window (opening it if needed). Never takes focus once it is open. */
   show(): void {
     this.wanted = true;
-    if (!this.proc && !this.launching && !this.launch()) {
-      return;
-    }
-    this.cmd({ cmd: 'show' }); // buffered until the window connects if it is still starting
+    (this.surface ??= this.create()).show();
   }
 
+  /** The frameless window just hides (the next cat shows it instantly); a webview closes. */
   hide(): void {
     this.wanted = false;
-    if (this.proc || this.launching) {
-      this.cmd({ cmd: 'hide' });
+    const surface = this.surface;
+    if (surface?.hide) {
+      surface.hide();
+    } else {
+      this.dispose();
     }
   }
 
-  /** Switches between inside-VS Code and floating by restarting the window. */
-  async setMode(mode: WindowMode): Promise<void> {
-    if (mode === this.mode) {
-      return;
-    }
-    this.mode = mode;
-    if (!this.proc && !this.launching) {
-      return; // the next launch uses the new mode
-    }
-    const reopen = this.wanted;
-    await this.dispose();
-    if (reopen) {
-      this.show();
-    }
+  /** Whether the frameless window hides while its VS Code window is minimized. */
+  setMinimizeWith(on: boolean): void {
+    this.minimizeWith = on;
+    this.surface?.setMinimizeWith?.(on);
+  }
+
+  /** Call when this VS Code window gets focus: the frameless window learns which window it follows. */
+  claimOwner(): void {
+    this.surface?.claimOwner?.();
   }
 
   /**
-   * Tells the window that this VS Code window is in front, so it can attach to it. Call it when
-   * this VS Code window gets focus. Not buffered: by the time a starting window connected, the
-   * foreground window may be a different one. `force` re-attaches even if already attached.
+   * Takes over a webview VS Code restored after a restart (in the window and place the user left
+   * it). Closed instead if there is a cat window already, or the frameless window replaces it.
    */
-  claimOwner(force = false): void {
-    if (this.mode === 'insideVSCode' && this.sock && !this.sock.destroyed) {
-      this.sock.write(JSON.stringify({ cmd: force ? 'reclaim' : 'claim' }) + '\n');
+  adopt(panel: vscode.WebviewPanel): void {
+    if (this.surface || this.useNative()) {
+      panel.dispose();
+      return;
     }
+    this.wanted = true;
+    this.surface = this.webview(panel);
   }
 
   setCount(count: number): void {
@@ -165,26 +144,20 @@ export class CatWindow {
     this.send(this.last);
   }
 
-  /** Watching started; idle() or spawn() follows once the channel has been checked. */
-  loading(): void {
-    this.last = { type: 'loading' };
-    this.send(this.last);
-  }
-
   /**
    * A cat appeared. `surf` (or `rain`, during a cat rain) animates it in; without one, Nyan (or the
    * empty storm) keeps looping under the overlay.
    */
-  spawn(id: string, title: string, surf?: SurfSet, rain?: RainCat, skipIntro = false): void {
+  spawn(id: string, title: string, surf?: SurfSet, rain?: RainCat): void {
     this.show();
-    this.last = { type: 'spawn', id, title, surf, rain, skipIntro };
+    this.last = { type: 'spawn', id, title, surf, rain };
     this.send(this.last);
   }
 
   /** Spawn `id`'s clips arrived after it appeared (it is still out): the window animates it in. */
   gifs(id: string, surf?: SurfSet, rain?: RainCat): void {
     if (this.last.type === 'spawn' && this.last.id === id) {
-      // In place: if this spawn is still queued for a launching window, it goes out with its clips.
+      // In place: if this spawn is still queued for a loading page, it goes out with its clips.
       this.last.surf ??= surf;
       this.last.rain ??= rain;
     }
@@ -218,246 +191,173 @@ export class CatWindow {
     this.send({ type: 'status', text });
   }
 
-  /** Drives the minigame terminal popup inside the window. Not replayed on restart. */
+  /** Drives the minigame terminal popup inside the window. Not replayed when the page reloads. */
   terminal(msg: TerminalMessage): void {
     this.show();
     this.send({ type: 'term', msg });
   }
 
-  /** Closes the window process; resolves once it has exited (killed after 1 s if needed). */
-  dispose(): Promise<void> {
-    const proc = this.proc;
-    if (!proc) {
-      this.generation++; // cancels a launch that is still cleaning up stale windows
-      this.reset();
-      return Promise.resolve();
-    }
-    const exited = new Promise<void>((resolve) => {
-      if (proc.exitCode !== null) {
-        resolve();
-        return;
-      }
-      proc.once('exit', () => resolve());
-      setTimeout(() => {
-        if (proc.exitCode === null) {
-          if (process.platform === 'win32' && proc.pid) {
-            // Take the window's GPU and renderer processes with it.
-            cp.execFile('taskkill.exe', ['/PID', String(proc.pid), '/T', '/F'], { windowsHide: true }, () => {});
-          } else {
-            proc.kill();
-          }
-        }
-      }, 1000).unref();
-      setTimeout(resolve, 2000).unref(); // never hang a reload or shutdown
-    });
-    this.cmd({ cmd: 'quit' });
+  /** Closes the window. The count and last state are replayed when it opens again. */
+  dispose(): void {
+    const surface = this.surface;
     this.reset();
-    return exited;
+    surface?.dispose();
   }
 
   // ---- internals ----
 
-  private electronPath(): string | undefined {
-    const dir = path.join(this.extensionPath, 'node_modules', 'electron');
-    try {
-      const exe = path.join(dir, 'dist', fs.readFileSync(path.join(dir, 'path.txt'), 'utf8').trim());
-      return fs.existsSync(exe) ? exe : undefined;
-    } catch {
-      return undefined;
+  private get mediaUri(): vscode.Uri {
+    return vscode.Uri.joinPath(this.extensionUri, 'media');
+  }
+
+  /** The frameless window, unless it can't run here or failed this session. */
+  private useNative(): boolean {
+    if (this.nativeOff) {
+      return false;
     }
-  }
-
-  /** Appends a line to <storage>/window.log (last LOG_LINES lines kept). */
-  private log(text: string): void {
-    appendLog(path.join(this.storageDir, 'window.log'), text, LOG_LINES);
-  }
-
-  private launch(): boolean {
-    const exe = this.electronPath();
-    if (!exe) {
-      if (!this.errorShown) {
-        this.errorShown = true;
-        void vscode.window.showErrorMessage(
-          'Cat Yoink window unavailable: Electron is missing. Run "npm install" in the extension folder.'
-        );
+    const why = nativeUnavailable(this.extensionUri.fsPath);
+    if (why) {
+      this.nativeOff = why;
+      if (process.platform === 'win32') {
+        this.warnFallback(why); // expected elsewhere; on Windows it's a broken install
       }
       return false;
     }
-    // Clear out windows left by an earlier build first (they'd keep answering with old code),
-    // then spawn. Messages sent meanwhile are buffered in outbox/queue.
-    const gen = ++this.generation;
-    this.launching = true;
-    void killStaleWindows(this.extensionPath)
-      .catch(() => {})
-      .then(() => {
-        if (gen === this.generation) {
-          this.spawnWindow(exe);
-        }
-      });
     return true;
   }
 
-  private spawnWindow(exe: string): void {
-    this.launching = false;
-    const id = `cat-yoink-${process.pid}-${Math.random().toString(36).slice(2, 8)}`;
-    const pipe = process.platform === 'win32' ? `\\\\.\\pipe\\${id}` : path.join(os.tmpdir(), `${id}.sock`);
-
-    const server = net.createServer((sock) => {
-      if (this.sock) {
-        sock.destroy(); // only one window per process
-        return;
-      }
-      this.sock = sock;
-      sock.setEncoding('utf8');
-      let buf = '';
-      sock.on('data', (chunk: string) => {
-        buf += chunk;
-        let i;
-        while ((i = buf.indexOf('\n')) >= 0) {
-          const line = buf.slice(0, i);
-          buf = buf.slice(i + 1);
-          try {
-            this.onMessage(JSON.parse(line));
-          } catch {
-            // ignore malformed lines
-          }
-        }
-      });
-      sock.on('error', () => {});
-      for (const line of this.outbox.splice(0)) {
-        sock.write(line);
-      }
-    });
-    server.on('error', () => {});
-    server.listen(pipe);
-
-    // The extension host runs with ELECTRON_RUN_AS_NODE set; Electron must not inherit it.
-    const env: NodeJS.ProcessEnv = {
-      ...process.env,
-      CAT_YOINK_PIPE: pipe,
-      CAT_YOINK_STATE: path.join(this.storageDir, 'window.json'),
-      CAT_YOINK_USER_DATA: path.join(this.storageDir, 'window-profile'),
-      CAT_YOINK_MODE: this.mode === 'floating' ? 'floating' : 'inside',
-      // How window/tracker.cs recognizes this VS Code's windows: they belong to VS Code's main
-      // process, which is the extension host's parent (or, failing that, to the same exe).
-      CAT_YOINK_CODE_PID: String(process.ppid),
-      CAT_YOINK_CODE_EXE: process.execPath,
-      CAT_YOINK_OWNER_HINT: this.ownerHint(),
-    };
-    delete env.ELECTRON_RUN_AS_NODE;
-
-    const proc = cp.spawn(exe, [path.join(this.extensionPath, 'window', 'main.js')], {
-      env,
-      stdio: ['ignore', 'pipe', 'pipe'],
-      windowsHide: false,
-    });
-    // Keep the tail of the window's output so a window that dies on launch leaves a trace.
-    let tail = '';
-    const collect = (d: Buffer) => {
-      tail = (tail + d.toString()).slice(-3000);
-    };
-    proc.stdout?.on('data', collect);
-    proc.stderr?.on('data', collect);
-    const startedAt = Date.now();
-    this.log(`window started (pid ${proc.pid})`);
-    proc.on('error', (err) => {
-      this.log(`window failed to spawn: ${err.message}`);
-      this.onExit(proc, startedAt, tail);
-    });
-    proc.on('exit', (code, signal) => {
-      this.log(`window exited (code ${code}, signal ${signal})\n${tail}`);
-      this.onExit(proc, startedAt, tail);
-    });
-
-    this.proc = proc;
-    this.server = server;
-    this.ready = false;
+  private create(): Surface {
+    return this.useNative() ? this.native() : this.webview();
   }
 
-  private onExit(proc: cp.ChildProcess, startedAt: number, tail: string): void {
-    if (this.proc !== proc) {
-      return; // we closed it ourselves (dispose) or it was already handled
+  private native(): Surface {
+    const surface: Surface = new NativeSurface(
+      {
+        extensionPath: this.extensionUri.fsPath,
+        storageDir: this.storageDir,
+        gifDir: this.gifDir.fsPath,
+        minimizeWith: this.minimizeWith,
+      },
+      this.eventsFor(() => surface),
+      (reason) => {
+        if (this.surface === surface) {
+          this.reset();
+          this.fallBack(reason);
+        }
+      }
+    );
+    return surface;
+  }
+
+  private webview(restored?: vscode.WebviewPanel): Surface {
+    const surface: Surface = new WebviewSurface(this.mediaUri, this.gifDir, this.eventsFor(() => surface), restored);
+    return surface;
+  }
+
+  /** Events from `self()`, ignored once it is no longer the current surface. */
+  private eventsFor(self: () => Surface): SurfaceEvents {
+    const current = () => this.surface !== undefined && this.surface === self();
+    return {
+      onMessage: (m) => {
+        if (current()) {
+          this.onMessage(m);
+        }
+      },
+      onClosed: () => {
+        if (current()) {
+          this.wanted = false; // the next cat reopens it
+        }
+      },
+      onGone: () => {
+        if (current()) {
+          this.gone();
+        }
+      },
+    };
+  }
+
+  /** The surface went away by itself: the user closed the webview, or the frameless window exited. */
+  private gone(): void {
+    const crashed = this.surface instanceof NativeSurface;
+    this.reset();
+    if (!crashed) {
+      return;
     }
-    const diedEarly = !this.ready && Date.now() - startedAt < EARLY_EXIT_MS;
-    this.reset(); // respawned on the next show()
-    if (diedEarly && !this.errorShown) {
-      this.errorShown = true;
-      void vscode.window.showErrorMessage(
-        `Cat Yoink window failed to start: see window.log in the extension storage folder. ${tail.trim().split('\n').pop() ?? ''}`.trim()
-      );
+    if (++this.crashes >= MAX_CRASHES) {
+      this.fallBack('it kept closing unexpectedly');
+    } else if (this.wanted) {
+      this.show(); // a fresh one, which gets the current state replayed
     }
+  }
+
+  /** The frameless window can't be used this session: VS Code's floating window is used instead. */
+  private fallBack(reason: string): void {
+    this.nativeOff = reason;
+    this.warnFallback(reason);
+    if (this.wanted) {
+      this.show();
+    }
+  }
+
+  private warnFallback(reason: string): void {
+    appendLog(path.join(this.storageDir, WINDOW_LOG), `frameless window off for this session: ${reason}`);
+    if (this.warned) {
+      return;
+    }
+    this.warned = true;
+    void vscode.window.showWarningMessage(
+      `Cat Yoink: the cat window couldn't open frameless (${reason}), so it uses a VS Code floating window ` +
+        `for now. Details are in ${WINDOW_LOG} in Cat Yoink's storage folder.`
+    );
   }
 
   private reset(): void {
-    this.sock?.destroy();
-    this.server?.close();
-    this.proc = undefined;
-    this.server = undefined;
-    this.sock = undefined;
-    this.outbox = [];
+    this.surface = undefined;
     this.ready = false;
     this.queue = [];
-    this.launching = false;
   }
 
-  private get ownerFile(): string {
-    return path.join(this.storageDir, 'window-owner.json');
-  }
-
-  /**
-   * The VS Code window handle the previous cat window attached to, if that was in this extension
-   * host (a hot reload respawns the cat window, but the VS Code window and its PID stay).
-   */
-  private ownerHint(): string {
-    try {
-      const o = JSON.parse(fs.readFileSync(this.ownerFile, 'utf8'));
-      return o.pid === process.pid && Number.isInteger(o.hwnd) ? String(o.hwnd) : '';
-    } catch {
-      return '';
-    }
-  }
-
-  private onMessage(m: { type: string; hwnd?: number }): void {
-    if (m.type === 'owner') {
-      try {
-        fs.mkdirSync(this.storageDir, { recursive: true });
-        fs.writeFileSync(this.ownerFile, JSON.stringify({ pid: process.pid, hwnd: m.hwnd }));
-      } catch {
-        // only used to reattach faster after a hot reload
+  private onMessage(m: { type: string; answer?: unknown }): void {
+    switch (m.type) {
+      case 'ready': {
+        // Also after the page reloads (e.g. moving into its own window): replay the current state.
+        this.ready = true;
+        if (vscode.window.state.focused) {
+          this.claimOwner(); // the foreground window is this VS Code window
+        }
+        this.post({ type: 'count', count: this.count });
+        // A fresh page mid-rain or mid-cat shows the storm and that cat's loop straight away. If a
+        // message is still queued, it's what opened the window, so it keeps its intro.
+        if (this.rainMsg && !this.queue.includes(this.rainMsg)) {
+          this.post({ ...this.rainMsg, skipIntro: true });
+        }
+        if (!this.queue.includes(this.last)) {
+          this.post(this.last.type === 'spawn' ? { ...this.last, skipIntro: true } : this.last);
+        }
+        for (const q of this.queue.splice(0)) {
+          this.post(q);
+        }
+        break;
       }
-      return;
-    }
-    if (m.type === 'closed') {
-      this.wanted = false; // the user closed it; the next cat reopens it
-      return;
-    }
-    if (m.type === 'ready') {
-      this.ready = true;
-      if (vscode.window.state.focused) {
-        this.claimOwner();
-      }
-      this.post({ type: 'count', count: this.count });
-      // A fresh window mid-rain or mid-cat (relaunched) shows the storm and that cat's loop straight
-      // away. If a message is still queued, it's what launched the window, so it keeps its intro.
-      if (this.rainMsg && !this.queue.includes(this.rainMsg)) {
-        this.post({ ...this.rainMsg, skipIntro: true });
-      }
-      if (!this.queue.includes(this.last)) {
-        this.post(this.last.type === 'spawn' ? { ...this.last, skipIntro: true } : this.last);
-      }
-      for (const q of this.queue.splice(0)) {
-        this.post(q);
-      }
-    } else if (m.type === 'yoink') {
-      this.onYoink();
-    } else if (m.type.startsWith('mg')) {
-      this.onTerminal(m);
+      case 'yoink':
+        this.onYoink();
+        break;
+      case 'close':
+        this.hide(); // watching continues; the next cat reopens the window
+        break;
+      case 'mgGo':
+      case 'mgClose':
+        this.onTerminal({ type: m.type });
+        break;
+      case 'mgAnswer':
+        this.onTerminal({ type: m.type, answer: String(m.answer ?? '').slice(0, 4000) });
+        break;
     }
   }
 
   private send(m: PanelMessage): void {
-    if (!this.proc && !this.launching) {
-      return; // the window replays count and last state when it starts
+    if (!this.surface) {
+      return; // the page replays count and last state when it opens
     }
     if (this.ready) {
       this.post(m);
@@ -466,16 +366,121 @@ export class CatWindow {
     }
   }
 
-  private post(msg: PanelMessage): void {
-    this.cmd({ cmd: 'post', msg });
+  private post(m: PanelMessage): void {
+    this.surface?.post(m);
+  }
+}
+
+/**
+ * The page in a VS Code webview, moved into its own VS Code window, made compact and always on top
+ * where VS Code supports that. VS Code restores it where the user left it after a restart
+ * (`restored`, via CatWindow.adopt()).
+ */
+class WebviewSurface implements Surface {
+  private panel?: vscode.WebviewPanel;
+  private subs: vscode.Disposable[] = [];
+
+  constructor(
+    private mediaUri: vscode.Uri,
+    private gifDir: vscode.Uri,
+    private events: SurfaceEvents,
+    restored?: vscode.WebviewPanel
+  ) {
+    if (restored) {
+      restored.webview.options = this.options();
+      this.attach(restored);
+    }
   }
 
-  private cmd(c: object): void {
-    const line = JSON.stringify(c) + '\n';
-    if (this.sock && !this.sock.destroyed) {
-      this.sock.write(line);
-    } else {
-      this.outbox.push(line);
+  show(): void {
+    if (!this.panel) {
+      this.open();
+    } else if (!this.panel.visible) {
+      this.panel.reveal(undefined, true);
     }
+  }
+
+  post(m: PanelMessage): void {
+    const webview = this.panel?.webview;
+    if (webview) {
+      void webview.postMessage(mapClipUrls(m, (file) => webview.asWebviewUri(vscode.Uri.file(file)).toString()));
+    }
+  }
+
+  dispose(): void {
+    const panel = this.panel;
+    this.detach();
+    panel?.dispose();
+  }
+
+  private options(): vscode.WebviewOptions {
+    return { enableScripts: true, localResourceRoots: [this.mediaUri, this.gifDir] };
+  }
+
+  private open(): void {
+    const panel = vscode.window.createWebviewPanel(
+      VIEW_TYPE,
+      'Cat Yoink',
+      // It has to be the active editor for the move into its own window.
+      { viewColumn: vscode.ViewColumn.Active, preserveFocus: false },
+      // Keeps the GIF sequence running while the tab is behind another one.
+      { ...this.options(), retainContextWhenHidden: true }
+    );
+    this.attach(panel);
+    void this.float(panel);
+  }
+
+  /** Moves a new panel into its own VS Code window, made compact and always on top where supported. */
+  private async float(panel: vscode.WebviewPanel): Promise<void> {
+    try {
+      const commands = new Set(await vscode.commands.getCommands(true));
+      if (this.panel !== panel || !commands.has(MOVE_TO_NEW_WINDOW)) {
+        return; // closed meanwhile, or a VS Code without floating windows: it stays a tab
+      }
+      if (!panel.active) {
+        panel.reveal(undefined, false); // the move acts on the active editor
+      }
+      await vscode.commands.executeCommand(MOVE_TO_NEW_WINDOW);
+      // These act on the focused window, which is the new one now.
+      for (const id of [COMPACT, ALWAYS_ON_TOP]) {
+        if (this.panel === panel && commands.has(id)) {
+          await vscode.commands.executeCommand(id);
+        }
+      }
+    } catch {
+      // it stays where it is
+    }
+  }
+
+  private attach(panel: vscode.WebviewPanel): void {
+    this.panel = panel;
+    panel.iconPath = vscode.Uri.joinPath(this.mediaUri, 'icon.png');
+    this.subs = [
+      panel.webview.onDidReceiveMessage((m: unknown) => {
+        if (panel === this.panel && m && typeof (m as { type?: unknown }).type === 'string') {
+          this.events.onMessage(m as { type: string; answer?: unknown });
+        }
+      }),
+      // Its X, its tab or its window was closed: the next cat reopens it.
+      panel.onDidDispose(() => {
+        if (this.panel === panel) {
+          this.detach();
+          this.events.onClosed();
+          this.events.onGone();
+        }
+      }),
+    ];
+    panel.webview.html = renderPanel(this.mediaUri.fsPath, {
+      csp: panel.webview.cspSource,
+      nonce: crypto.randomBytes(16).toString('hex'),
+      media: panel.webview.asWebviewUri(this.mediaUri).toString(),
+    });
+  }
+
+  private detach(): void {
+    for (const d of this.subs.splice(0)) {
+      d.dispose();
+    }
+    this.panel = undefined;
   }
 }

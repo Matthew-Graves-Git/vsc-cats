@@ -60,7 +60,7 @@ function sleep(ms) {
   Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
 }
 
-/** Retries briefly: a running Cat Yoink window can hold a file open on Windows. */
+/** Retries briefly: Windows can hold a file open for a moment (antivirus, the indexer). */
 function withRetry(fn) {
   for (let attempt = 0; ; attempt++) {
     try {
@@ -98,59 +98,6 @@ function same(a, b) {
   } catch {
     return false;
   }
-}
-
-// ---- the running cat window ----
-
-/** Windows: processes running from the installed folder ({pid, helper}), i.e. the cat window's Electron. */
-function processesInExtDir() {
-  if (process.platform !== 'win32') {
-    return [];
-  }
-  const root = (path.resolve(extDir) + path.sep).toLowerCase().replace(/'/g, "''");
-  const script =
-    `Get-CimInstance Win32_Process | Where-Object { $_.ExecutablePath -and ` +
-    `$_.ExecutablePath.ToLower().StartsWith('${root}') } | ` +
-    `ForEach-Object { '{0} {1}' -f $_.ProcessId, [int]($_.CommandLine -match '--type=') }`;
-  const r = cp.spawnSync(
-    'powershell.exe',
-    ['-NoProfile', '-NonInteractive', '-Command', script],
-    { encoding: 'utf8', windowsHide: true }
-  );
-  return (r.stdout || '')
-    .split(/\r?\n/)
-    .map((l) => l.trim().split(' '))
-    .filter((a) => a.length === 2 && Number(a[0]) > 0)
-    .map(([pid, helper]) => ({ pid: Number(pid), helper: helper === '1' }));
-}
-
-/**
- * The cat window runs electron.exe from the installed folder, and Windows won't delete a running
- * exe, so VS Code can't replace the folder while it is open ("Please restart VS Code before
- * reinstalling Cat Yoink", after deleting part of the folder). Close it first; the extension
- * reopens it after the reload signal.
- */
-function stopCatWindows() {
-  let procs = processesInExtDir();
-  if (!procs.length) {
-    return;
-  }
-  const kill = (pid) => cp.spawnSync('taskkill.exe', ['/PID', String(pid), '/T', '/F'], { windowsHide: true });
-  const mains = procs.filter((p) => !p.helper);
-  for (const p of mains.length ? mains : procs) {
-    kill(p.pid); // /T also ends its GPU/renderer helpers and the window tracker
-  }
-  for (let i = 0; i < 10 && (procs = processesInExtDir()).length; i++) {
-    if (i >= 2) {
-      procs.forEach((p) => kill(p.pid)); // stragglers
-    }
-    sleep(500);
-  }
-  console.log(
-    procs.length
-      ? `[sync-install] WARNING: processes still running from ${extDir}: ${procs.map((p) => p.pid).join(', ')}`
-      : '[sync-install] Closed the Cat Yoink window so the extension folder can be replaced.'
-  );
 }
 
 /**
@@ -209,11 +156,10 @@ function fullInstall(reason) {
     throw new Error('vsce package failed');
   }
   const install = () => {
-    stopCatWindows();
     recreateListedFolder();
     return run('code', ['--install-extension', `"${vsix}"`, '--force']).status === 0;
   };
-  // Retry once: a cat appearing mid-install can reopen the window and lock the folder again.
+  // Retry once: Windows can briefly hold a file in the folder open (antivirus, the indexer).
   let ok = install();
   if (!ok) {
     console.log('[sync-install] Install failed; retrying once...');
@@ -296,6 +242,15 @@ function fastSync() {
 }
 
 // ---- main ----
+
+// The frameless window's WebView2 files (window/lib) come from npm install; fetch them if a
+// checkout predates that.
+if (cp.spawnSync(process.execPath, [path.join(__dirname, 'fetch-webview2.js')], { stdio: 'inherit' }).status !== 0) {
+  console.warn('[sync-install] window/lib is incomplete: the cat window falls back to a VS Code floating window.');
+} else if (cp.spawnSync(process.execPath, [path.join(__dirname, 'build-host.js')], { stdio: 'inherit' }).status !== 0) {
+  // window/CatHost.exe (only rebuilt when window/host.cs changed).
+  console.warn('[sync-install] window/CatHost.exe was not built: PowerShell compiles the cat window at every start.');
+}
 
 try {
   if (fs.existsSync(extDir) && fs.realpathSync(extDir) === fs.realpathSync(root)) {

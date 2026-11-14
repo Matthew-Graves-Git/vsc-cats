@@ -1,6 +1,6 @@
 # Cat Yoink
 
-Watches a Discord channel for **Cat Bot** spawns ("… appeared!") and shows the cat in a small always-on-top window with a pixel-art **YOINK!** button. When a cat appears, the Nyan Cat GIF finishes its current loop, the matching surf GIF plays once, and then that cat's surf loop repeats. Pressing YOINK types `cat` in the channel for you and, after the current loop finishes, the return GIF plays once and Nyan Cat is back. If someone else catches the cat or it gets away, the same return plays. The GIF is picked by the word right before "cat" in the spawn message ("Fine cat has appeared!" → `fine_01_surf.gif`); cat types without GIFs (e.g. Baby cat) keep Nyan on screen with just the caption and button. The window then says which cat was caught (e.g. "Yoinked! Fine cat caught!"). If a cat is already waiting when Cat Yoink starts (or the window is reopened mid-cat), its surf loop shows right away instead of the surf-in.
+Watches a Discord channel for **Cat Bot** spawns ("… appeared!") and shows the cat in a small floating, always-on-top window with a pixel-art **YOINK!** button. When a cat appears, the Nyan Cat GIF finishes its current loop, the matching surf GIF plays once, and then that cat's surf loop repeats. Pressing YOINK types `cat` in the channel for you and, after the current loop finishes, the return GIF plays once and Nyan Cat is back. If someone else catches the cat or it gets away, the same return plays. The GIF is picked by the word right before "cat" in the spawn message ("Fine cat has appeared!" → `fine_01_surf.gif`); cat types without GIFs (e.g. Baby cat) keep Nyan on screen with just the caption and button. The window then says which cat was caught (e.g. "Yoinked! Fine cat caught!"). The window opens on Nyan as soon as Cat Yoink starts, while Discord is still loading; a cat that turns out to be already waiting surfs in like any other. If the window is reopened mid-cat, the cat's surf loop shows right away instead of the surf-in.
 
 While no cat is around the window plays a looping Nyan Cat GIF with an animated "Loading cat..." and a "Yoinked N Cats" counter. While a cat is out, the counter is replaced by "<Type> Cat Appeared!".
 
@@ -12,37 +12,35 @@ Only the Nyan Cat loop (`media/idle.gif`) ships with the extension. The surf and
 - A cat that appears before its GIFs are downloaded jumps the queue. Until they arrive it is shown over Nyan with its caption and YOINK!; if it is still out once they have, it surfs (or walks) in at the next loop.
 - On every start, one request checks the repo for changes (free when nothing changed). New or changed GIFs are downloaded again, and deleted ones are removed from the cache. Once downloaded, everything works offline.
 
-To change a GIF, edit it in that repo's `gifs/` folder and push to `main`: installed copies pick it up the next time VS Code starts. `npm run test-window` uses a local `media/gifs` if you have one, otherwise the GIFs the installed extension downloaded (or the folder named in `CAT_YOINK_GIFS`).
+To change a GIF, edit it in that repo's `gifs/` folder and push to `main`: installed copies pick it up the next time VS Code starts.
 
 ## Install
 
-Cat Yoink runs on Windows only (the cat window is a bundled Electron app) and isn't on the VS Code Marketplace. It's shared as a `.vsix` file on this repo's [GitHub Releases](https://github.com/Matthew-Graves-Git/vsc-cats/releases).
+Install **Cat Yoink** from the VS Code Marketplace, or download `cat-yoink-<version>.vsix` from the [latest GitHub release](https://github.com/Matthew-Graves-Git/vsc-cats/releases/latest) and use the Extensions view › `…` menu › **Install from VSIX…** (or `code --install-extension cat-yoink-<version>.vsix`). On Windows the cat window is a frameless window of its own, which uses the Microsoft Edge WebView2 Runtime that comes with Windows 10/11. Elsewhere it is a VS Code floating window, whose always-on-top mode needs VS Code 1.100 or newer.
 
-1. Download `cat-yoink-win32-x64-<version>.vsix` from the [latest release](https://github.com/Matthew-Graves-Git/vsc-cats/releases/latest).
-2. In VS Code, open the Extensions view › `…` menu › **Install from VSIX…** and pick the file (or run `code --install-extension cat-yoink-win32-x64-<version>.vsix`).
-3. Run **Cat Yoink: Set Discord Channel** and paste the channel link (right-click the channel in Discord > Copy Link).
-4. A browser window opens on the Discord login. Log in. The window closes itself and watching continues invisibly (headless Edge/Chrome).
-5. If your Discord session expires, a notification offers **Log in**, which shows the browser again.
+1. Run **Cat Yoink: Set Discord Channel** and paste the channel link (right-click the channel in Discord > Copy Link).
+2. A browser window opens on the Discord login. Log in. The window closes itself and watching continues invisibly (headless Edge/Chrome).
+3. If your Discord session expires, a notification offers **Log in**, which shows the browser again.
 
-Uses your installed Edge or Chrome (auto-detected, or set `catYoink.browserPath`). The login is kept in a private browser profile inside VS Code's extension storage, not in your normal browser.
+Uses your installed Edge or Chrome (auto-detected, or set `catYoink.browserPath`). The login is kept in a private browser profile inside VS Code's extension storage, not in your normal browser. The browser's add-on downloads (Edge fetches an AI image model, video DRM, shopping and wallet data) are turned off and its caches are cleared at each start, so the profile stays around 20 MB.
 
 **Updates:** once a day Cat Yoink asks GitHub whether a newer release is out, and if so offers its download page. Install the new `.vsix` the same way; it replaces the old version. **Cat Yoink: Check for Updates** (also in the menu) checks right away, and `catYoink.checkForUpdates` turns the daily check off.
 
-**Upgrading from 0.x:** the old builds were installed as `local.cat-yoink`, which VS Code treats as a separate extension. While it's still installed, the new version waits and offers **Move & Uninstall**. That moves your Discord login, downloaded GIFs and window layout over and uninstalls the old version; the catch count starts again from 0. Reload the window afterwards.
+**Upgrading from 0.x:** the old builds were installed as `local.cat-yoink`, which VS Code treats as a separate extension. While it's still installed, the new version waits and offers **Move & Uninstall**. That moves your Discord login and downloaded GIFs over and uninstalls the old version; the catch count starts again from 0. Reload the window afterwards.
 
 ## The Cat Yoink window
 
-- A frameless window (its own small Electron app, no title bar) that opens every time VS Code starts while `catYoink.autoStart` is on.
-- It lives inside the VS Code window that is watching (`catYoink.windowMode` = `insideVSCode`, the default; Windows only):
-  - It can't be dragged or resized past that window's edges. It keeps its distance from the nearest corner when VS Code moves or resizes. The first time, it opens 24px in from VS Code's bottom-right corner.
-  - If VS Code gets smaller than the cat window, the cat window shrinks with it (down to 200×200) and grows back to its own size afterwards.
-  - It stays stacked just above VS Code, so other apps in front of VS Code cover it too. It hides while VS Code is minimized, including when a cat appears, and comes back when VS Code is restored.
-  - It stays hidden until Cat Yoink knows which VS Code window is watching. That's immediate when only one VS Code window is open; otherwise it's the first time the watching window gets focus.
-  - It sticks to that window, even when you focus other VS Code windows or floating editor windows. If it ever picks the wrong one, run **Cat Yoink: Attach Window Here** in the right window.
-- With `catYoink.windowMode` = `floating`, it is a free always-on-top window that remembers its own screen position instead. The first time, it opens in the bottom-right corner of your main screen.
-- Drag anywhere on the picture to move it; drag its edges to resize it. Its position and size are saved and reused every time it opens.
-- The **X** in the corner (shown only while the cursor is over the window) hides it. Watching continues, and the window pops back up when the next cat appears (or run **Cat Yoink: Show Panel**).
-- It never takes focus when it appears, so it doesn't interrupt typing.
+- Opens every time VS Code starts while `catYoink.autoStart` is on.
+- On Windows: a small frameless window, **always on top** of other windows, with no title bar and no taskbar button.
+  - Drag anywhere on the picture (or the minigame terminal's title bar) to move it. Drag its edges or corners to resize it, down to 200×200.
+  - It can't be moved or resized past the edge of the screen (it may cover the taskbar). With several monitors it is always fully on one of them: drag it across and it hops over once its center reaches the next one.
+  - The first time, it opens 24px in from the bottom-right corner of your main screen. After that it opens where you left it, at that size (`window-layout.json` in the extension storage), moved back onto the screen if your screens changed.
+  - While VS Code is minimized it hides too, and comes back when you restore VS Code (`catYoink.minimizeWithVSCode`, on by default; also in the menu). Cats that appear meanwhile wait: the window shows whatever is going on when VS Code comes back. With several VS Code windows it follows the one that is watching.
+  - It never takes focus, not even when it opens. Click it to type in the minigame terminal.
+  - It is `window/CatHost.exe`, a small .NET Framework program compiled from `window/host.cs` when the extension is packaged. It shows the page in the Microsoft Edge WebView2 Runtime, using the WebView2 SDK files in `window/lib`. If the exe is missing or can't run, Windows PowerShell compiles `host.cs` and runs it instead, which takes about twice as long to open. Problems, start-up times and errors on the page go to `window.log` in the extension storage.
+  - If it can't start either way (no WebView2 Runtime, unsigned programs and PowerShell both blocked by policy...) or keeps closing by itself, Cat Yoink says so once. Until VS Code restarts it then uses the VS Code floating window described next.
+- On macOS and Linux (or if the frameless window can't start): Cat Yoink's tab moves into its own small VS Code window (a floating editor window), switched to compact mode and kept always on top (VS Code 1.100+; older versions get a plain floating window). Drag it by its title bar and resize it from its edges. Opening it moves focus to it once, because VS Code needs that to move it into its own window. After that it never takes focus. VS Code remembers where it was and restores it after a restart. Staying on screen and minimizing with VS Code are up to VS Code here.
+- The **X** in the corner (shown only while the cursor is over the window) closes it, and so do Alt+F4 and closing its tab or VS Code window. Watching continues, and the window pops back up when the next cat appears (or run **Cat Yoink: Show Panel**).
 
 ## Cat rain
 
@@ -54,7 +52,7 @@ When Cat Bot starts a cat rain in the channel (`/rain`, Catnip's "started a shor
 4. After the exit, the next cat's enter plays if one is already out, otherwise `rain_no_cat.gif` again.
 5. When Cat Bot says "cat rain has ended", the last cat exits as usual and `nyan_enters_rain_clears.gif` brings Nyan back.
 
-A surfing cat that is still out when a rain starts keeps surfing; once it has returned, the rain starts from Nyan. Cat types without rain GIFs keep the empty storm on screen under the caption. If watching starts (or the window reopens) mid-rain, it goes straight to the storm. If Cat Bot's end message is missed, the storm clears after 5 minutes without a new cat. Yoinking and counting work the same as for any other cat. **Cat Yoink: Test Cat Rain** plays a short made-up rain (three cats) in the window, without Discord. `npm run test-window` (or `electron window/main.js --test`) opens a window by itself, with no VS Code or Discord, and runs through every event: a random cat to Yoink, a bonus minigame, then a cat rain with two random cats. Each step waits for your click and moves on by itself after a timeout.
+A surfing cat that is still out when a rain starts keeps surfing; once it has returned, the rain starts from Nyan. Cat types without rain GIFs keep the empty storm on screen under the caption. If watching starts (or the window reopens) mid-rain, it goes straight to the storm. If Cat Bot's end message is missed, the storm clears after 5 minutes without a new cat. Yoinking and counting work the same as for any other cat. **Cat Yoink: Test Cat Rain** plays a short made-up rain (three cats, the second of which someone else catches first: "Too slow!") in the window, without Discord.
 
 ## Bonus-cat minigame terminal
 
@@ -64,25 +62,27 @@ The first real minigame saves a copy of Discord's question dialog in the extensi
 
 ## Development
 
-1. Use Node 24 or newer (`@vscode/vsce` 4 needs Node 22+, Electron 45's installer 22.12+). Run `npm install`, then `npm run compile`. Since Electron 42 the `electron` package no longer downloads its binary on install: `npm run package` fetches it (`install-electron`), and so does `npm run test-window` on first use.
-2. Install it once: `npm run package` and `code --install-extension cat-yoink-win32-x64-<version>.vsix`, then reload the window.
-   After that, **F5** compiles, copies the build into the installed extension (`scripts/sync-install.js`) and Cat Yoink reloads itself in the open VS Code window(s) — no new window, and other extensions keep running. Changes to commands or settings in `package.json` still need a window reload (you'll be asked).
+1. Use Node 22 or newer (`@vscode/vsce` 4 needs it). Run `npm install`, then `npm run compile`. `npm install` also downloads the pinned WebView2 SDK files into `window/lib` (`scripts/fetch-webview2.js`, which checks the package's SHA-256).
+2. Install it once: `npm run package` and `code --install-extension cat-yoink-<version>.vsix`, then reload the window.
+   After that, **F5** compiles, copies the build (including `window/`) into the installed extension (`scripts/sync-install.js`) and Cat Yoink reloads itself in the open VS Code window(s) — no new window, and other extensions keep running. Changes to commands or settings in `package.json` still need a window reload (you'll be asked).
+3. `window/CatHost.exe` is built by `scripts/build-host.js` (`npm run build-host`; packaging and F5 run it, and it only rebuilds after `window/host.cs` changed). It uses the C# compiler of the .NET Framework that comes with Windows, so `host.cs` has to stay C# 5. On macOS and Linux the script does nothing.
+4. `npm run test-window` (Windows) builds the host and the TypeScript, then opens the cat window by itself, with no VS Code or Discord, and runs through every event: a random cat to Yoink, a bonus minigame, a cat someone else catches first ("Too slow!"), then a cat rain with two random cats. Each step waits for your click and moves on by itself after a timeout; the window's X quits. It uses the GIFs the installed extension downloaded (or the folder named in `CAT_YOINK_GIFS`), and keeps its own window position in a temp folder.
 
 ## Releasing
 
-Releases are built by GitHub Actions ([`.github/workflows/release.yml`](.github/workflows/release.yml)) on a Windows runner, so the `.vsix` carries the Windows build of Electron.
+Releases are built by GitHub Actions ([`.github/workflows/release.yml`](.github/workflows/release.yml)), on a Windows runner because `window/CatHost.exe` is compiled there. The `.vsix` is universal: plain JS, plus the Windows cat window (`CatHost.exe`, which runs on x64 and arm64, and the WebView2 SDK files it loads for both). The same file goes to the GitHub release and to the Marketplace (`vsce publish --oidc`, trusted publishing: the Marketplace publisher has to trust this repository's workflow).
 
 1. Commit and push everything: the workflow only sees what's on GitHub.
 2. Run `npm version patch` (or `minor` / `major`). It bumps the version in `package.json` and `package-lock.json`, commits, and tags `v<version>`.
-3. Run `git push --follow-tags`. The workflow builds `cat-yoink-win32-x64-<version>.vsix` and publishes it as the release **Cat Yoink v&lt;version&gt;**. Installed copies see it at their next daily update check.
+3. Run `git push --follow-tags`. The workflow builds `cat-yoink-<version>.vsix` and publishes it as the release **Cat Yoink v&lt;version&gt;** and to the Marketplace.
 
-The tag has to match the version in `package.json`: the workflow stops otherwise, and the update check compares the two. **Actions › Release › Run workflow** builds the `.vsix` as a downloadable artifact without releasing anything.
+The tag has to match the version in `package.json`: the workflow stops otherwise, and the update check compares the two. **Actions › Release › Run workflow** builds the `.vsix` as a downloadable artifact without releasing or publishing anything.
 
 ## Commands
 
-`Cat Yoink: Set Discord Channel`, `Start Watching`, `Stop Watching`, `Log In To Discord`, `Show Panel`, `Attach Window Here`, `Reset Catch Count`, `Test Minigame Terminal`, `Test Cat Rain`, `Check for Updates`, `Menu` (also the status bar item).
+`Cat Yoink: Set Discord Channel`, `Start Watching`, `Stop Watching`, `Log In To Discord`, `Show Panel`, `Reset Catch Count`, `Test Minigame Terminal`, `Test Cat Rain`, `Check for Updates`, `Menu` (also the status bar item).
 
-The menu also has one-click toggles for **Start with VS Code** (`catYoink.autoStart`) and the **window mode** (inside VS Code or always on top, `catYoink.windowMode`).
+The menu also has one-click toggles for **Start with VS Code** (`catYoink.autoStart`) and, on Windows, **Minimize with VS Code** (`catYoink.minimizeWithVSCode`).
 
 ## Settings
 
@@ -97,7 +97,7 @@ The menu also has one-click toggles for **Start with VS Code** (`catYoink.autoSt
 | `catYoink.rainEndText` | `cat rain has ended` | Regex (case-insensitive) meaning the cat rain is over |
 | `catYoink.browserPath` | auto | Edge/Chrome executable |
 | `catYoink.autoStart` | `true` | Open the window and start watching every time VS Code starts |
-| `catYoink.windowMode` | `insideVSCode` | `insideVSCode`: kept inside the watching VS Code window (Windows only). `floating`: free and always on top |
+| `catYoink.minimizeWithVSCode` | `true` | Windows: hide the cat window while its VS Code window is minimized, and bring it back when VS Code is restored |
 | `catYoink.checkForUpdates` | `true` | Once a day, check GitHub Releases for a newer version and offer its download page |
 
 ## How the catch counter works

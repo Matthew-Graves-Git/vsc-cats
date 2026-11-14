@@ -1,5 +1,4 @@
-// Made-up minigame rounds for the test runs (Test Minigame Terminal, and window/main.js --test).
-// No vscode import: the Electron window requires the compiled out/testRounds.js too.
+// Made-up minigame rounds for the Test Minigame Terminal command.
 import type { MinigameForm } from './discordBrowser';
 
 export interface TestRound {

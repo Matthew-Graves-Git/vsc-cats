@@ -1,12 +1,13 @@
-# Builds the Cat Yoink .vsix and publishes it as a GitHub release.
+# Builds the Cat Yoink .vsix, publishes it as a GitHub release and to the VS Code Marketplace.
 #
 #   Release:  npm version patch && git push --follow-tags
 #             (the pushed tag, e.g. v1.0.3, must match package.json's version)
 #   Dry run:  Actions tab > Release > Run workflow: builds the .vsix as a downloadable artifact only.
 #
-# Runs on Windows because the .vsix ships the Electron build downloaded for the machine it runs on
-# (the cat window needs the win32-x64 electron.exe; `vscode:prepublish` runs install-electron).
-# Nothing goes to the Marketplace.
+# The .vsix is universal: plain JS plus what the frameless cat window uses on Windows: the WebView2
+# SDK files (window/lib, for both x64 and arm64; npm ci fetches them) and window/CatHost.exe, which
+# scripts/build-host.js compiles from window/host.cs with the runner's .NET Framework compiler. So
+# it has to be built on Windows; other platforms use a VS Code floating window instead.
 name: Release
 
 on:
@@ -16,6 +17,7 @@ on:
 
 permissions:
   contents: write # create the release and attach the .vsix
+  id-token: write # `vsce publish --oidc` (Marketplace trusted publishing) needs a GitHub OIDC token
 
 jobs:
   vsix:
@@ -40,8 +42,13 @@ jobs:
             exit 1
           fi
 
-      # vsce package --target win32-x64; its prepublish step compiles.
+      # vsce package; its prepublish step compiles (TypeScript, and window/CatHost.exe).
       - run: npm run package
+
+      # Without it the cat window still works, but PowerShell compiles it at every start.
+      - name: Check the .vsix has the prebuilt cat window
+        shell: bash
+        run: unzip -l cat-yoink-*.vsix | grep -q 'extension/window/CatHost.exe'
 
       - name: Publish the GitHub release
         if: github.event_name == 'push'
@@ -49,7 +56,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: >
-          gh release create "$GITHUB_REF_NAME" cat-yoink-win32-x64-*.vsix
+          gh release create "$GITHUB_REF_NAME" cat-yoink-*.vsix
           --repo "$GITHUB_REPOSITORY" --title "Cat Yoink $GITHUB_REF_NAME" --generate-notes
 
       - name: Keep the .vsix (dry run)
@@ -57,8 +64,12 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           name: cat-yoink-vsix
-          path: cat-yoink-win32-x64-*.vsix
+          path: cat-yoink-*.vsix
           if-no-files-found: error
-          
+
+      # The same .vsix that went to the GitHub release, with the project's own vsce (package-lock.json).
+      # Not on dry runs.
       - name: Publish to Marketplace
-        run: npx --yes @vscode/vsce@4.0.2 publish --oidc
+        if: github.event_name == 'push'
+        shell: bash
+        run: npx --no-install vsce publish --oidc --packagePath cat-yoink-*.vsix

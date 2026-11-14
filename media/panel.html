@@ -3,8 +3,11 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <!-- A template: src/catWindow.ts fills in {{csp}} (the webview's resource origin), {{nonce}} and
+       {{media}} (this folder's webview URL, so the relative links below and idle.gif resolve). -->
   <meta http-equiv="Content-Security-Policy"
-        content="default-src 'none'; img-src file: data: https:; style-src file:; font-src file:; script-src file:;" />
+        content="default-src 'none'; img-src {{csp}} data: https:; style-src {{csp}}; font-src {{csp}}; script-src 'nonce-{{nonce}}';" />
+  <base href="{{media}}/" />
   <link rel="stylesheet" href="panel.css" />
   <link rel="stylesheet" href="terminal.css" />
   <title>Cat Yoink</title>
@@ -15,8 +18,12 @@
          No src yet: panel.js starts Nyan only once it knows no cat is already out. -->
     <img class="scene" id="scene" alt="" />
 
-    <!-- Drag anywhere to move the window; the 6px margin leaves the edges for resizing. -->
+    <!-- Frameless window only (html.native): drag anywhere to move it; the edge zones resize it. -->
     <div class="drag" aria-hidden="true"></div>
+    <div class="edges" aria-hidden="true">
+      <i data-edge="n"></i><i data-edge="s"></i><i data-edge="e"></i><i data-edge="w"></i>
+      <i data-edge="ne"></i><i data-edge="nw"></i><i data-edge="se"></i><i data-edge="sw"></i>
+    </div>
 
     <button class="close" id="close" type="button" aria-label="Close" title="Close">X</button>
 
@@ -51,7 +58,8 @@
     </section>
   </div>
 
-  <script src="terminal.js"></script>
-  <script src="panel.js"></script>
+  <script nonce="{{nonce}}" src="host.js"></script>
+  <script nonce="{{nonce}}" src="terminal.js"></script>
+  <script nonce="{{nonce}}" src="panel.js"></script>
 </body>
 </html>

@@ -10,9 +10,8 @@ import { killStaleBrowsers } from './discordBrowser';
 
 export const OLD_ID = 'local.cat-yoink';
 
-/** What moves over: the Discord login and the GIF cache (folders), and the window layout. */
-const ITEMS = ['browser-profile', 'gifs', 'window.json'];
-const FILES = new Set(['window.json']);
+/** What moves over: the Discord login and the GIF cache. */
+const ITEMS = ['browser-profile', 'gifs'];
 
 /**
  * Left out when the login profile has to be copied rather than renamed: Chromium's lock files (a
@@ -39,7 +38,7 @@ export function offerMove(ctx: vscode.ExtensionContext): void {
   void vscode.window
     .showInformationMessage(
       `Cat Yoink ${version} replaces the older Cat Yoink (${OLD_ID}) that is also installed. Move your Discord ` +
-        'login, cat GIFs and window layout here and uninstall the old version? Your catch count starts again from 0.',
+        'login and cat GIFs here and uninstall the old version? Your catch count starts again from 0.',
       MOVE,
       'Not Now'
     )
@@ -115,7 +114,7 @@ async function moveOver(ctx: vscode.ExtensionContext): Promise<void> {
 
 /**
  * Moves the old build's items that we don't have yet into `to` by renaming (same disk: instant).
- * The layout file is copied: the old cat window may still write it. Returns the items that failed.
+ * Returns the items that failed.
  */
 function renameOver(from: string, to: string): string[] {
   const failed: string[] = [];
@@ -127,11 +126,7 @@ function renameOver(from: string, to: string): string[] {
       continue; // nothing to move, or ours wins
     }
     try {
-      if (FILES.has(name)) {
-        fs.copyFileSync(src, dst);
-      } else {
-        fs.renameSync(src, dst);
-      }
+      fs.renameSync(src, dst);
     } catch {
       failed.push(name); // in use, or on another drive
     }

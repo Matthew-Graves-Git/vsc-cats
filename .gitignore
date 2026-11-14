@@ -3,3 +3,5 @@ out/
 *.vsix
 claude.md
 media/gifs
+window/lib/
+window/CatHost.exe

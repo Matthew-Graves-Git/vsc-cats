@@ -56,7 +56,7 @@
 
 .term ::selection { background: rgba(51, 255, 102, 0.3); color: var(--g); }
 
-/* ---- title bar (drag handle; panel.js moves the window) ---- */
+/* ---- title bar (also the frameless window's drag handle while the terminal is open; panel.js) ---- */
 .term-bar {
   flex: none;
   display: flex;
@@ -80,7 +80,7 @@
   text-shadow: inherit;
   cursor: pointer;
 }
-.stage.hovered .term-close,
+.stage:hover .term-close,
 .term-close:focus-visible { visibility: visible; }
 .term-close:hover { background: var(--g-wash); }
 .term-close:focus { outline: none; }
